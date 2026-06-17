@@ -2920,7 +2920,10 @@ async function initCloudSave() {
 
     const firebaseApp = appModule.initializeApp(firebaseConfig);
     const auth = authModule.getAuth(firebaseApp);
-    const db = firestoreModule.getFirestore(firebaseApp);
+    const db = firestoreModule.initializeFirestore(firebaseApp, {
+      experimentalAutoDetectLongPolling: true,
+      useFetchStreams: false
+    });
     const provider = new authModule.GoogleAuthProvider();
     provider.setCustomParameters({ prompt: "select_account" });
 
@@ -2930,6 +2933,8 @@ async function initCloudSave() {
       provider,
       doc: firestoreModule.doc,
       getDoc: firestoreModule.getDoc,
+      getDocFromServer: firestoreModule.getDocFromServer,
+      enableNetwork: firestoreModule.enableNetwork,
       setDoc: firestoreModule.setDoc,
       serverTimestamp: firestoreModule.serverTimestamp,
       signInWithPopup: authModule.signInWithPopup,
@@ -2987,7 +2992,7 @@ async function handleCloudAuthState(user) {
   render();
 
   try {
-    const snapshot = await cloudApi.getDoc(getCloudSaveRef());
+    const snapshot = await fetchCloudSaveSnapshot();
     if (snapshot.exists()) {
       const remoteData = sanitizeCloudSaveData(snapshot.data());
       if (remoteData && state.cloud.enabled) {
@@ -3012,7 +3017,7 @@ async function handleCloudAuthState(user) {
     render();
   } catch (error) {
     state.cloud.status = "error";
-    state.cloud.message = `クラウドデータの確認に失敗しました。Firestoreのルールや設定を確認してください。${error?.message ? ` ${error.message}` : ""}`;
+    state.cloud.message = `クラウドデータの確認に失敗しました。${formatCloudError(error)}`;
     render();
   }
 }
@@ -3071,7 +3076,7 @@ async function forceLoadCloudSave() {
   state.cloud.message = "クラウドから最新データを読み込んでいます。";
   render();
   try {
-    const snapshot = await cloudApi.getDoc(getCloudSaveRef());
+    const snapshot = await fetchCloudSaveSnapshot();
     if (!snapshot.exists()) {
       state.cloud.status = "signedIn";
       state.cloud.message = "クラウドに保存データがまだありません。正しい端末でクラウドへ保存してください。";
@@ -3098,7 +3103,7 @@ async function forceLoadCloudSave() {
     maybeScheduleAiTurn();
   } catch (error) {
     state.cloud.status = "error";
-    state.cloud.message = `クラウドからの読み込みに失敗しました。${error?.message || ""}`;
+    state.cloud.message = `クラウドからの読み込みに失敗しました。${formatCloudError(error)}`;
     render();
   }
 }
@@ -3123,6 +3128,20 @@ async function enableCloudAndUpload() {
 
 function getCloudSaveRef() {
   return cloudApi.doc(cloudApi.db, "users", state.cloud.user.uid, "saves", "main");
+}
+
+async function fetchCloudSaveSnapshot() {
+  if (cloudApi.enableNetwork) {
+    try {
+      await cloudApi.enableNetwork(cloudApi.db);
+    } catch {
+      // The SDK may already be online; continue to the read attempt.
+    }
+  }
+  if (cloudApi.getDocFromServer) {
+    return cloudApi.getDocFromServer(getCloudSaveRef());
+  }
+  return cloudApi.getDoc(getCloudSaveRef());
 }
 
 function queueCloudSave() {
@@ -3154,6 +3173,9 @@ async function saveCloudData({ force = false } = {}) {
   const data = collectCloudSaveData();
   state.cloud.saving = true;
   try {
+    if (cloudApi.enableNetwork) {
+      await cloudApi.enableNetwork(cloudApi.db);
+    }
     await cloudApi.setDoc(getCloudSaveRef(), {
       ...data,
       updatedAt: cloudApi.serverTimestamp()
@@ -3283,6 +3305,21 @@ function formatSyncTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString("ja-JP", { dateStyle: "short", timeStyle: "short" });
+}
+
+function formatCloudError(error) {
+  const code = error?.code || "";
+  const message = error?.message || "";
+  if (code === "unavailable" || message.includes("client is offline")) {
+    return "Firestoreへ接続できませんでした。通信方式を調整した最新版に更新後、ページを再読み込みしてください。続く場合はFirebaseのFirestore Databaseが作成済みか確認してください。";
+  }
+  if (code === "permission-denied" || message.includes("Missing or insufficient permissions")) {
+    return "Firestoreルールで拒否されました。FIREBASE_SETUP.md のRulesを設定してください。";
+  }
+  if (code === "not-found") {
+    return "Firestore Databaseがまだ作成されていない可能性があります。Firebase ConsoleでFirestore Databaseを作成してください。";
+  }
+  return message || "Firebase設定、Firestore Database、Rulesを確認してください。";
 }
 
 function readCustomCards() {

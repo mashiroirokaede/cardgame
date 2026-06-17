@@ -101,3 +101,19 @@ service cloud.firestore {
 - この端末のデータをクラウドへ保存
 
 一度選ぶと、その後は自動保存になります。
+
+## よくあるエラー
+
+### Failed to get document because the client is offline
+
+ログインはできているがFirestoreから読めていない状態です。
+
+確認すること:
+
+1. GitHubに最新版の `app.js` と `sw.js` をアップロードしている
+2. `sw.js` の `CACHE_NAME` が上がっている
+3. スマホで `https://mashiroirokaede.github.io/cardgame/index.html?v=26` のように開き直す
+4. Firebase Consoleで `Firestore Database` が作成済み
+5. FirestoreのRulesが設定済み
+
+それでも続く場合は、ゲーム側のFirestore通信方式をスマホ向けに調整している最新版が反映されていない可能性が高いです。
