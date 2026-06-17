@@ -548,6 +548,16 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "cloud-force-load") {
+    forceLoadCloudSave();
+    return;
+  }
+
+  if (action === "cloud-force-upload") {
+    forceUploadCloudSave();
+    return;
+  }
+
   if (action === "add-deck-card") {
     addDeckCard(button.dataset.cardId);
     return;
@@ -810,6 +820,27 @@ function renderCloudSave() {
         <div class="notice cloud-message">${escapeHtml(cloud.message || "")}</div>
         ${cloud.lastSync ? `<div class="notice">最終同期: ${escapeHtml(cloud.lastSync)}</div>` : ""}
       </div>
+
+      ${signedIn ? `
+        <div class="band stack">
+          <div class="section-title">
+            <div>
+              <h3>手動同期</h3>
+              <p>端末ごとの枚数がズレた時は、正しい方の端末でクラウドへ保存し、もう片方でクラウドから読み込みます。</p>
+            </div>
+          </div>
+          <div class="cloud-save-list">
+            <span>ガチャ玉 ${state.gachaBalls}個</span>
+            <span>${CREATOR_TICKET_NAME} ${state.creatorTickets}枚</span>
+            <span>所持カード ${Object.values(state.inventory).reduce((sum, count) => sum + count, 0)}枚</span>
+            <span>山札 ${state.deckIds.length}枚</span>
+          </div>
+          <div class="toolbar">
+            <button class="primary" data-action="cloud-force-load">クラウドから再読み込み</button>
+            <button class="accent" data-action="cloud-force-upload">この端末をクラウドへ保存</button>
+          </div>
+        </div>
+      ` : ""}
 
       ${cloud.needsChoice && cloud.remoteData ? `
         <div class="band stack">
@@ -3032,6 +3063,54 @@ async function loadCloudSaveChoice() {
 async function uploadLocalSaveChoice() {
   await enableCloudAndUpload();
   showToast("この端末のデータをクラウドに保存しました。");
+}
+
+async function forceLoadCloudSave() {
+  if (!cloudApi || !state.cloud.user) return;
+  state.cloud.status = "syncing";
+  state.cloud.message = "クラウドから最新データを読み込んでいます。";
+  render();
+  try {
+    const snapshot = await cloudApi.getDoc(getCloudSaveRef());
+    if (!snapshot.exists()) {
+      state.cloud.status = "signedIn";
+      state.cloud.message = "クラウドに保存データがまだありません。正しい端末でクラウドへ保存してください。";
+      render();
+      return;
+    }
+    const remoteData = sanitizeCloudSaveData(snapshot.data());
+    if (!remoteData) {
+      state.cloud.status = "error";
+      state.cloud.message = "クラウドデータを読み込めませんでした。保存データの形式を確認してください。";
+      render();
+      return;
+    }
+    applyCloudSaveData(remoteData);
+    state.cloud.enabled = true;
+    saveCloudEnabled(true);
+    state.cloud.needsChoice = false;
+    state.cloud.remoteData = null;
+    state.cloud.status = "signedIn";
+    state.cloud.message = "クラウドから最新データを読み込みました。";
+    state.cloud.lastSync = formatSyncTime(remoteData.savedAt);
+    showToast("クラウドから再読み込みしました。");
+    render();
+    maybeScheduleAiTurn();
+  } catch (error) {
+    state.cloud.status = "error";
+    state.cloud.message = `クラウドからの読み込みに失敗しました。${error?.message || ""}`;
+    render();
+  }
+}
+
+async function forceUploadCloudSave() {
+  if (!cloudApi || !state.cloud.user) return;
+  state.cloud.enabled = true;
+  state.cloud.needsChoice = false;
+  state.cloud.remoteData = null;
+  saveCloudEnabled(true);
+  await saveCloudData({ force: true });
+  showToast("この端末のデータをクラウドへ保存しました。");
 }
 
 async function enableCloudAndUpload() {
