@@ -1,0 +1,20 @@
+{
+  "name": "レベルリンク・カードバトル",
+  "short_name": "レベルリンク",
+  "description": "召喚、墓地送り、レベル倍率で戦うWebカードゲーム",
+  "lang": "ja",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fff9fd",
+  "theme_color": "#ff8fbd",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

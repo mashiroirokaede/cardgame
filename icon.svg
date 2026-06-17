@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="レベルリンク">
+  <rect width="512" height="512" rx="96" fill="#fff9fd"/>
+  <path d="M92 162c0-39 31-70 70-70h188c39 0 70 31 70 70v188c0 39-31 70-70 70H162c-39 0-70-31-70-70V162Z" fill="#ffffff" stroke="#dde7f1" stroke-width="14"/>
+  <path d="M139 168c48-54 103-53 135 1 35-31 80-25 104 15 29 48-10 108-120 165C148 292 102 210 139 168Z" fill="#ffe0ee"/>
+  <path d="M159 180c38-43 82-42 108 1 28-25 64-20 83 12 23 38-8 86-96 132-88-45-124-111-95-145Z" fill="#ff8fbd"/>
+  <path d="M255 129v253" stroke="#80d8ff" stroke-width="26" stroke-linecap="round"/>
+  <path d="M174 256h164" stroke="#9ee7ca" stroke-width="26" stroke-linecap="round"/>
+  <text x="256" y="292" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="86" font-weight="800" fill="#ffffff">LL</text>
+</svg>
