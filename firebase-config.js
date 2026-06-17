@@ -1,10 +1,10 @@
 // Firebase console > Project settings > Your apps > Web app config.
 // This file is intentionally safe to publish, but Firestore security rules must protect user data.
 export const firebaseConfig = {
-  apiKey: "AIzaSyCNQVDqowzYQBTaLinfVil3MZdEeyWv2Ro",
-  authDomain: "cardgame-a39d6.firebaseapp.com",
-  projectId: "cardgame-a39d6",
-  storageBucket: "cardgame-a39d6.firebasestorage.app",
-  messagingSenderId: "448950032927",
-  appId: "1:448950032927:web:e17dae6a15ffc31343932a"
+  apiKey: "AIzaSyDwbhHESGCBEFY2Oaen5kO5B-SfYp1l-l0",
+  authDomain: "cardgame-b98b8.firebaseapp.com",
+  projectId: "cardgame-b98b8",
+  storageBucket: "cardgame-b98b8.firebasestorage.app",
+  messagingSenderId: "1093880108331",
+  appId: "1:1093880108331:web:f0ca11074314ab7433e16e"
 };
