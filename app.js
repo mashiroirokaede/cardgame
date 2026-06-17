@@ -8,7 +8,8 @@ const STORAGE_KEYS = {
   gachaHistory: "levelLink.gachaHistory.v1",
   gachaBalls: "levelLink.gachaBalls.v1",
   lastDailyReward: "levelLink.lastDailyReward.v1",
-  aiBattle: "levelLink.aiBattle.v1"
+  aiBattle: "levelLink.aiBattle.v1",
+  cloudEnabled: "levelLink.cloudEnabled.v1"
 };
 
 const MAX_HP = 500;
@@ -26,6 +27,9 @@ const GACHA_SINGLE_COST = 1;
 const GACHA_TEN_COST = 10;
 const GACHA_CARDS_PER_BALL = 5;
 const GACHA_HISTORY_LIMIT = 200;
+const CLOUD_SAVE_VERSION = 1;
+const CLOUD_SAVE_DEBOUNCE_MS = 900;
+const FIREBASE_SDK_VERSION = "10.12.5";
 const DAILY_GACHA_BALL_REWARD = 2;
 const AI_WIN_GACHA_BALL_REWARD = 3;
 const AI_LOSE_GACHA_BALL_REWARD = 1;
@@ -420,13 +424,27 @@ const state = {
     value: 2
   },
   battle: null,
-  fx: null
+  fx: null,
+  cloud: {
+    status: "loading",
+    configured: false,
+    enabled: false,
+    needsChoice: false,
+    user: null,
+    remoteData: null,
+    message: "クラウド保存を確認しています。",
+    lastSync: "",
+    saving: false,
+    applyingRemote: false
+  }
 };
 
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 let toastTimer = null;
 let fxTimer = null;
+let cloudSaveTimer = null;
+let cloudApi = null;
 
 init();
 registerServiceWorker();
@@ -446,8 +464,10 @@ function init() {
     state.deckIds = sanitizeDeck(state.deckIds);
     saveDeck();
   }
+  state.cloud.enabled = readCloudEnabled();
   attachEvents();
   render();
+  initCloudSave();
 }
 
 function attachEvents() {
@@ -505,6 +525,26 @@ function handleClick(event) {
     state.activeGachaSetId = button.dataset.setId || DEFAULT_GACHA_SET_ID;
     state.gachaResults = [];
     render();
+    return;
+  }
+
+  if (action === "cloud-login") {
+    signInWithGoogle();
+    return;
+  }
+
+  if (action === "cloud-logout") {
+    signOutCloud();
+    return;
+  }
+
+  if (action === "cloud-load") {
+    loadCloudSaveChoice();
+    return;
+  }
+
+  if (action === "cloud-upload") {
+    uploadLocalSaveChoice();
     return;
   }
 
@@ -685,6 +725,7 @@ function renderTopbar() {
         <button class="ghost" data-action="screen" data-screen="gacha">ガチャ</button>
         <button class="ghost" data-action="screen" data-screen="deck">山札編成</button>
         <button class="ghost" data-action="screen" data-screen="creator">カード作成</button>
+        <button class="ghost" data-action="screen" data-screen="cloud">クラウド保存</button>
         <button class="${battleMode ? "accent" : "ghost"}" data-action="start-battle">バトル開始</button>
         <button class="ghost" data-action="start-ai-battle">AI戦</button>
       </nav>
@@ -697,6 +738,7 @@ function renderScreen() {
   if (state.screen === "deck") return renderDeckBuilder();
   if (state.screen === "creator") return renderCardCreator();
   if (state.screen === "battle") return renderBattle();
+  if (state.screen === "cloud") return renderCloudSave();
   if (state.screen === "online") return renderOnlinePlaceholder();
   return renderMenu();
 }
@@ -707,6 +749,7 @@ function renderMenu() {
       ${renderMenuTile("ガチャ", "ガチャ玉を使ってカードと創造チケットを入手します。", "召", "gacha")}
       ${renderMenuTile("山札編成", "100〜300枚の山札を所持カードと作成カードから組みます。", "山", "deck")}
       ${renderMenuTile("カード作成", "ガチャで入手した創造チケットを消費してカードを作ります。", "作", "creator")}
+      ${renderMenuTile("クラウド保存", "Googleアカウントでログインして別端末にもデータを引き継ぎます。", "雲", "cloud")}
       <button class="menu-tile" data-action="start-battle">
         <span class="menu-icon">戦</span>
         <span><strong>バトル開始</strong>1台で遊べる2人対戦を開始します。先攻はルーレットで決まります。</span>
@@ -726,6 +769,103 @@ function renderMenuTile(title, body, icon, screen) {
       <span class="menu-icon">${escapeHtml(icon)}</span>
       <span><strong>${escapeHtml(title)}</strong>${escapeHtml(body)}</span>
     </button>
+  `;
+}
+
+function renderCloudSave() {
+  const cloud = state.cloud;
+  const user = cloud.user;
+  const signedIn = Boolean(user);
+  const setupText = [
+    "Firebaseプロジェクトを作成",
+    "AuthenticationでGoogleログインを有効化",
+    "Firestore Databaseを作成",
+    "firebase-config.jsに設定値を入力",
+    "GitHub PagesのURLを承認済みドメインに追加"
+  ];
+  return `
+    <section class="stack">
+      <div class="band">
+        <div class="section-title">
+          <div>
+            <h2>クラウド保存</h2>
+            <p>Googleアカウントでログインすると、所持カード・山札・ガチャ玉・作成カードを別端末へ引き継げます。</p>
+          </div>
+          <span class="pill ${cloudStatusClass()}">${escapeHtml(cloudStatusLabel())}</span>
+        </div>
+        <div class="cloud-panel">
+          <div class="cloud-account">
+            <div class="cloud-avatar">${user?.photoURL ? `<img src="${escapeAttr(user.photoURL)}" alt="">` : "G"}</div>
+            <div>
+              <strong>${signedIn ? escapeHtml(user.displayName || "Googleユーザー") : "未ログイン"}</strong>
+              <small>${signedIn ? escapeHtml(user.email || "") : "クラウド保存を使うにはGoogleログインが必要です。"}</small>
+            </div>
+          </div>
+          <div class="toolbar">
+            ${signedIn
+              ? `<button data-action="cloud-logout">ログアウト</button>`
+              : `<button class="primary" data-action="cloud-login" ${cloud.configured ? "" : "disabled"}>Googleでログイン</button>`}
+          </div>
+        </div>
+        <div class="notice cloud-message">${escapeHtml(cloud.message || "")}</div>
+        ${cloud.lastSync ? `<div class="notice">最終同期: ${escapeHtml(cloud.lastSync)}</div>` : ""}
+      </div>
+
+      ${cloud.needsChoice && cloud.remoteData ? `
+        <div class="band stack">
+          <div class="section-title">
+            <div>
+              <h3>保存データの選択</h3>
+              <p>クラウドに既存データがあります。どちらを使うか選んでください。</p>
+            </div>
+          </div>
+          <div class="split">
+            <div class="cloud-choice">
+              <h3>クラウドデータを読み込む</h3>
+              <p>この端末のデータをクラウドの内容で置き換えます。別端末の続きで遊ぶ時はこちらです。</p>
+              <button class="primary" data-action="cloud-load">クラウドを読み込む</button>
+            </div>
+            <div class="cloud-choice">
+              <h3>この端末をクラウドへ保存</h3>
+              <p>今この端末にあるデータでクラウドを上書きします。この端末を正として保存する時はこちらです。</p>
+              <button class="accent" data-action="cloud-upload">この端末を保存する</button>
+            </div>
+          </div>
+        </div>
+      ` : ""}
+
+      <div class="band">
+        <div class="section-title">
+          <div>
+            <h3>保存されるもの</h3>
+            <p>オンライン対戦とは別に、まずはゲームデータの引き継ぎだけを行います。</p>
+          </div>
+        </div>
+        <div class="cloud-save-list">
+          <span>所持カード</span>
+          <span>作成カード</span>
+          <span>山札</span>
+          <span>ガチャ玉</span>
+          <span>カード創造チケット</span>
+          <span>AI戦の途中データ</span>
+        </div>
+      </div>
+
+      ${cloud.configured ? "" : `
+        <div class="band stack">
+          <div class="section-title">
+            <div>
+              <h3>Firebase設定が必要です</h3>
+              <p>この機能を使うには、公開前にFirebaseの設定値を入れる必要があります。</p>
+            </div>
+          </div>
+          <ol class="setup-list">
+            ${setupText.map((text) => `<li>${escapeHtml(text)}</li>`).join("")}
+          </ol>
+          <div class="notice">詳しい手順は FIREBASE_SETUP.md に追加しています。</div>
+        </div>
+      `}
+    </section>
   `;
 }
 
@@ -2725,6 +2865,347 @@ function sanitizeDeck(deckIds) {
   return sanitized;
 }
 
+async function initCloudSave() {
+  try {
+    const configModule = await import("./firebase-config.js");
+    const firebaseConfig = configModule.firebaseConfig || window.LEVEL_LINK_FIREBASE_CONFIG;
+    if (!isFirebaseConfigReady(firebaseConfig)) {
+      state.cloud.status = "disabled";
+      state.cloud.configured = false;
+      state.cloud.message = "Firebase設定が未入力です。firebase-config.jsを設定するとGoogleログインが使えます。";
+      render();
+      return;
+    }
+
+    const [
+      appModule,
+      authModule,
+      firestoreModule
+    ] = await Promise.all([
+      import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app.js`),
+      import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-auth.js`),
+      import(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-firestore.js`)
+    ]);
+
+    const firebaseApp = appModule.initializeApp(firebaseConfig);
+    const auth = authModule.getAuth(firebaseApp);
+    const db = firestoreModule.getFirestore(firebaseApp);
+    const provider = new authModule.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: "select_account" });
+
+    cloudApi = {
+      auth,
+      db,
+      provider,
+      doc: firestoreModule.doc,
+      getDoc: firestoreModule.getDoc,
+      setDoc: firestoreModule.setDoc,
+      serverTimestamp: firestoreModule.serverTimestamp,
+      signInWithPopup: authModule.signInWithPopup,
+      signInWithRedirect: authModule.signInWithRedirect,
+      signOut: authModule.signOut
+    };
+
+    state.cloud.configured = true;
+    state.cloud.status = "signedOut";
+    state.cloud.message = "Googleでログインするとクラウド保存を開始できます。";
+    render();
+
+    authModule.onAuthStateChanged(auth, (user) => {
+      handleCloudAuthState(user);
+    });
+  } catch (error) {
+    state.cloud.status = "error";
+    state.cloud.message = `Firebaseの読み込みに失敗しました。ネット接続か設定を確認してください。${error?.message ? ` ${error.message}` : ""}`;
+    render();
+  }
+}
+
+function isFirebaseConfigReady(config) {
+  return Boolean(
+    config &&
+    typeof config === "object" &&
+    config.apiKey &&
+    config.authDomain &&
+    config.projectId &&
+    config.appId
+  );
+}
+
+async function handleCloudAuthState(user) {
+  if (!user) {
+    state.cloud.user = null;
+    state.cloud.remoteData = null;
+    state.cloud.needsChoice = false;
+    state.cloud.status = state.cloud.configured ? "signedOut" : "disabled";
+    state.cloud.message = state.cloud.configured
+      ? "Googleでログインするとクラウド保存を開始できます。"
+      : "Firebase設定が未入力です。";
+    render();
+    return;
+  }
+
+  state.cloud.user = {
+    uid: user.uid,
+    displayName: user.displayName || "",
+    email: user.email || "",
+    photoURL: user.photoURL || ""
+  };
+  state.cloud.status = "syncing";
+  state.cloud.message = "クラウドデータを確認しています。";
+  render();
+
+  try {
+    const snapshot = await cloudApi.getDoc(getCloudSaveRef());
+    if (snapshot.exists()) {
+      const remoteData = sanitizeCloudSaveData(snapshot.data());
+      if (remoteData && state.cloud.enabled) {
+        applyCloudSaveData(remoteData);
+        state.cloud.needsChoice = false;
+        state.cloud.remoteData = null;
+        state.cloud.status = "signedIn";
+        state.cloud.message = "クラウドデータを読み込みました。以後は自動保存します。";
+        state.cloud.lastSync = formatSyncTime(remoteData.savedAt);
+        maybeScheduleAiTurn();
+      } else if (remoteData) {
+        state.cloud.needsChoice = true;
+        state.cloud.remoteData = remoteData;
+        state.cloud.status = "signedIn";
+        state.cloud.message = "クラウドに保存データがあります。読み込むか、この端末のデータで上書きするか選んでください。";
+      } else {
+        await enableCloudAndUpload();
+      }
+    } else {
+      await enableCloudAndUpload();
+    }
+    render();
+  } catch (error) {
+    state.cloud.status = "error";
+    state.cloud.message = `クラウドデータの確認に失敗しました。Firestoreのルールや設定を確認してください。${error?.message ? ` ${error.message}` : ""}`;
+    render();
+  }
+}
+
+async function signInWithGoogle() {
+  if (!cloudApi) {
+    showToast("Firebase設定が未入力です。");
+    return;
+  }
+  state.cloud.message = "Googleログインを開いています。";
+  render();
+  try {
+    await cloudApi.signInWithPopup(cloudApi.auth, cloudApi.provider);
+  } catch (error) {
+    if (String(error?.code || "").includes("popup")) {
+      await cloudApi.signInWithRedirect(cloudApi.auth, cloudApi.provider);
+      return;
+    }
+    state.cloud.status = "error";
+    state.cloud.message = `Googleログインに失敗しました。${error?.message || ""}`;
+    render();
+  }
+}
+
+async function signOutCloud() {
+  if (!cloudApi) return;
+  saveCloudEnabled(false);
+  state.cloud.enabled = false;
+  await cloudApi.signOut(cloudApi.auth);
+  showToast("クラウド保存からログアウトしました。");
+}
+
+async function loadCloudSaveChoice() {
+  if (!state.cloud.remoteData) return;
+  applyCloudSaveData(state.cloud.remoteData);
+  state.cloud.enabled = true;
+  saveCloudEnabled(true);
+  state.cloud.needsChoice = false;
+  state.cloud.remoteData = null;
+  state.cloud.status = "signedIn";
+  state.cloud.message = "クラウドデータを読み込みました。以後は自動保存します。";
+  state.cloud.lastSync = formatSyncTime(collectCloudSaveData().savedAt);
+  showToast("クラウドデータを読み込みました。");
+  render();
+  maybeScheduleAiTurn();
+}
+
+async function uploadLocalSaveChoice() {
+  await enableCloudAndUpload();
+  showToast("この端末のデータをクラウドに保存しました。");
+}
+
+async function enableCloudAndUpload() {
+  state.cloud.enabled = true;
+  state.cloud.needsChoice = false;
+  state.cloud.remoteData = null;
+  saveCloudEnabled(true);
+  await saveCloudData({ force: true });
+}
+
+function getCloudSaveRef() {
+  return cloudApi.doc(cloudApi.db, "users", state.cloud.user.uid, "saves", "main");
+}
+
+function queueCloudSave() {
+  if (
+    state.cloud.applyingRemote ||
+    !state.cloud.enabled ||
+    state.cloud.needsChoice ||
+    !state.cloud.user ||
+    !cloudApi
+  ) {
+    return;
+  }
+  window.clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = window.setTimeout(() => {
+    saveCloudData();
+  }, CLOUD_SAVE_DEBOUNCE_MS);
+}
+
+async function saveCloudData({ force = false } = {}) {
+  if (
+    !force &&
+    (!state.cloud.enabled || state.cloud.needsChoice || !state.cloud.user || !cloudApi)
+  ) {
+    return;
+  }
+  if (!state.cloud.user || !cloudApi) return;
+
+  window.clearTimeout(cloudSaveTimer);
+  const data = collectCloudSaveData();
+  state.cloud.saving = true;
+  try {
+    await cloudApi.setDoc(getCloudSaveRef(), {
+      ...data,
+      updatedAt: cloudApi.serverTimestamp()
+    }, { merge: true });
+    state.cloud.saving = false;
+    state.cloud.status = "signedIn";
+    state.cloud.lastSync = formatSyncTime(data.savedAt);
+    state.cloud.message = "クラウドへ保存しました。";
+    render();
+  } catch (error) {
+    state.cloud.saving = false;
+    state.cloud.status = "error";
+    state.cloud.message = `クラウド保存に失敗しました。${error?.message || ""}`;
+    render();
+  }
+}
+
+function collectCloudSaveData() {
+  return {
+    version: CLOUD_SAVE_VERSION,
+    savedAt: new Date().toISOString(),
+    customCards: state.customCards,
+    inventory: state.inventory,
+    creatorTickets: state.creatorTickets,
+    gachaBalls: state.gachaBalls,
+    lastDailyReward: state.lastDailyReward,
+    gachaHistory: state.gachaHistory.slice(0, GACHA_HISTORY_LIMIT),
+    deckIds: state.deckIds,
+    activeGachaSetId: state.activeGachaSetId,
+    aiBattle: getSerializableAiBattle()
+  };
+}
+
+function sanitizeCloudSaveData(data) {
+  if (!data || typeof data !== "object") return null;
+  return {
+    version: CLOUD_SAVE_VERSION,
+    savedAt: typeof data.savedAt === "string" ? data.savedAt : "",
+    customCards: Array.isArray(data.customCards)
+      ? data.customCards.filter(isValidCustomCard).map(upgradeCustomCard)
+      : [],
+    inventory: data.inventory && typeof data.inventory === "object" && !Array.isArray(data.inventory)
+      ? data.inventory
+      : {},
+    creatorTickets: Math.max(0, clampInteger(data.creatorTickets, 0, 9999)),
+    gachaBalls: Math.max(0, clampInteger(data.gachaBalls, 0, 9999)),
+    lastDailyReward: typeof data.lastDailyReward === "string" ? data.lastDailyReward : "",
+    gachaHistory: Array.isArray(data.gachaHistory) ? data.gachaHistory.slice(0, GACHA_HISTORY_LIMIT) : [],
+    deckIds: Array.isArray(data.deckIds) ? data.deckIds : [],
+    activeGachaSetId: typeof data.activeGachaSetId === "string" ? data.activeGachaSetId : DEFAULT_GACHA_SET_ID,
+    aiBattle: data.aiBattle || null
+  };
+}
+
+function applyCloudSaveData(data) {
+  state.cloud.applyingRemote = true;
+  state.customCards = data.customCards;
+  state.inventory = data.inventory;
+  state.creatorTickets = data.creatorTickets;
+  state.gachaBalls = data.gachaBalls;
+  state.lastDailyReward = data.lastDailyReward;
+  state.gachaHistory = data.gachaHistory;
+  state.gachaResults = [];
+  state.activeGachaSetId = GACHA_SETS.some((set) => set.id === data.activeGachaSetId)
+    ? data.activeGachaSetId
+    : DEFAULT_GACHA_SET_ID;
+  normalizeInventory();
+  state.deckIds = sanitizeDeck(data.deckIds);
+  if (state.deckIds.length === 0) state.deckIds = sanitizeDeck(buildDefaultDeck());
+  state.battle = normalizeSavedAiBattle(data.aiBattle) || null;
+  persistLocalSaveData();
+  state.cloud.applyingRemote = false;
+}
+
+function persistLocalSaveData() {
+  localStorage.setItem(STORAGE_KEYS.customCards, JSON.stringify(state.customCards));
+  localStorage.setItem(STORAGE_KEYS.inventory, JSON.stringify(state.inventory));
+  localStorage.setItem(STORAGE_KEYS.creatorTickets, String(state.creatorTickets));
+  localStorage.setItem(STORAGE_KEYS.gachaBalls, String(state.gachaBalls));
+  localStorage.setItem(STORAGE_KEYS.lastDailyReward, state.lastDailyReward);
+  localStorage.setItem(STORAGE_KEYS.gachaHistory, JSON.stringify(state.gachaHistory.slice(0, GACHA_HISTORY_LIMIT)));
+  localStorage.setItem(STORAGE_KEYS.deck, JSON.stringify(state.deckIds));
+  const aiBattle = getSerializableAiBattle();
+  if (aiBattle) {
+    localStorage.setItem(STORAGE_KEYS.aiBattle, JSON.stringify(aiBattle));
+  } else {
+    localStorage.removeItem(STORAGE_KEYS.aiBattle);
+  }
+}
+
+function getSerializableAiBattle() {
+  const battle = state.battle;
+  if (!battle || battle.mode !== "ai" || battle.phase === "over") return null;
+  const copy = JSON.parse(JSON.stringify(battle));
+  copy.aiScheduled = false;
+  copy.aiThinking = copy.phase === "battle" && copy.activePlayer === copy.aiPlayer;
+  return copy;
+}
+
+function readCloudEnabled() {
+  return localStorage.getItem(STORAGE_KEYS.cloudEnabled) === "1";
+}
+
+function saveCloudEnabled(enabled) {
+  localStorage.setItem(STORAGE_KEYS.cloudEnabled, enabled ? "1" : "0");
+}
+
+function cloudStatusLabel() {
+  if (state.cloud.saving) return "保存中";
+  if (state.cloud.status === "signedIn") return state.cloud.enabled ? "自動保存ON" : "ログイン中";
+  if (state.cloud.status === "signedOut") return "未ログイン";
+  if (state.cloud.status === "syncing") return "同期中";
+  if (state.cloud.status === "disabled") return "未設定";
+  if (state.cloud.status === "error") return "要確認";
+  return "確認中";
+}
+
+function cloudStatusClass() {
+  if (state.cloud.status === "signedIn" && state.cloud.enabled) return "mint strong";
+  if (state.cloud.status === "error") return "pink strong";
+  if (state.cloud.status === "disabled") return "aqua";
+  return "aqua strong";
+}
+
+function formatSyncTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("ja-JP", { dateStyle: "short", timeStyle: "short" });
+}
+
 function readCustomCards() {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.customCards) || "[]");
@@ -2736,6 +3217,7 @@ function readCustomCards() {
 
 function saveCustomCards() {
   localStorage.setItem(STORAGE_KEYS.customCards, JSON.stringify(state.customCards));
+  queueCloudSave();
 }
 
 function readInventory() {
@@ -2749,6 +3231,7 @@ function readInventory() {
 
 function saveInventory() {
   localStorage.setItem(STORAGE_KEYS.inventory, JSON.stringify(state.inventory));
+  queueCloudSave();
 }
 
 function readCreatorTickets() {
@@ -2758,6 +3241,7 @@ function readCreatorTickets() {
 
 function saveCreatorTickets() {
   localStorage.setItem(STORAGE_KEYS.creatorTickets, String(state.creatorTickets));
+  queueCloudSave();
 }
 
 function readGachaBalls() {
@@ -2767,6 +3251,7 @@ function readGachaBalls() {
 
 function saveGachaBalls() {
   localStorage.setItem(STORAGE_KEYS.gachaBalls, String(state.gachaBalls));
+  queueCloudSave();
 }
 
 function readLastDailyReward() {
@@ -2775,6 +3260,7 @@ function readLastDailyReward() {
 
 function saveLastDailyReward() {
   localStorage.setItem(STORAGE_KEYS.lastDailyReward, state.lastDailyReward);
+  queueCloudSave();
 }
 
 function grantDailyRewardIfAvailable() {
@@ -2805,6 +3291,7 @@ function readGachaHistory() {
 
 function saveGachaHistory() {
   localStorage.setItem(STORAGE_KEYS.gachaHistory, JSON.stringify(state.gachaHistory.slice(0, GACHA_HISTORY_LIMIT)));
+  queueCloudSave();
 }
 
 function readDeck() {
@@ -2818,6 +3305,7 @@ function readDeck() {
 
 function saveDeck() {
   localStorage.setItem(STORAGE_KEYS.deck, JSON.stringify(state.deckIds));
+  queueCloudSave();
 }
 
 function resumeSavedAiBattle() {
@@ -2865,11 +3353,18 @@ function syncAiBattleSave() {
   const copy = JSON.parse(JSON.stringify(battle));
   copy.aiScheduled = false;
   copy.aiThinking = copy.phase === "battle" && copy.activePlayer === copy.aiPlayer;
-  localStorage.setItem(STORAGE_KEYS.aiBattle, JSON.stringify(copy));
+  const serialized = JSON.stringify(copy);
+  if (localStorage.getItem(STORAGE_KEYS.aiBattle) !== serialized) {
+    localStorage.setItem(STORAGE_KEYS.aiBattle, serialized);
+    queueCloudSave();
+  }
 }
 
 function clearSavedAiBattle() {
-  localStorage.removeItem(STORAGE_KEYS.aiBattle);
+  if (localStorage.getItem(STORAGE_KEYS.aiBattle) !== null) {
+    localStorage.removeItem(STORAGE_KEYS.aiBattle);
+    queueCloudSave();
+  }
 }
 
 function normalizeSavedAiBattle(battle) {

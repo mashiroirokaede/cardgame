@@ -1,11 +1,12 @@
 "use strict";
 
-const CACHE_NAME = "level-link-card-battle-v23";
+const CACHE_NAME = "level-link-card-battle-v24";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
+  "./firebase-config.js",
   "./manifest.webmanifest",
   "./icon.svg",
   "./assets/card-photo-sheet.png"
