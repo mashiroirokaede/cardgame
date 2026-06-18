@@ -7,6 +7,9 @@ const STORAGE_KEYS = {
   creatorTickets: "levelLink.creatorTickets.v1",
   gachaHistory: "levelLink.gachaHistory.v1",
   gachaBalls: "levelLink.gachaBalls.v1",
+  gold: "levelLink.gold.v1",
+  questClears: "levelLink.questClears.v1",
+  marketPurchases: "levelLink.marketPurchases.v1",
   lastDailyReward: "levelLink.lastDailyReward.v1",
   aiBattle: "levelLink.aiBattle.v1",
   cloudEnabled: "levelLink.cloudEnabled.v1"
@@ -27,6 +30,12 @@ const GACHA_SINGLE_COST = 1;
 const GACHA_TEN_COST = 10;
 const GACHA_CARDS_PER_BALL = 5;
 const GACHA_HISTORY_LIMIT = 200;
+const GOLD_NAME = "ゴールド";
+const QUEST_AREA_COUNT = 5;
+const QUEST_STAGES_PER_AREA = 10;
+const QUEST_FIRST_CLEAR_GACHA_BALL_REWARD = 10;
+const MARKET_SHOP_LISTING_COUNT = 6;
+const MARKET_AUCTION_LISTING_COUNT = 5;
 const CLOUD_SAVE_VERSION = 1;
 const CLOUD_SAVE_DEBOUNCE_MS = 900;
 const FIREBASE_SDK_VERSION = "10.12.5";
@@ -64,7 +73,7 @@ const CREATOR_TIERS = [
     minRarity: "N",
     maxAtk: 8,
     maxDef: 12,
-    spellMax: { draw: 2, maxCost: 1, heal: 8 },
+    spellMax: { draw: 2, maxCost: 1, heal: 30, graveHand: 1 },
     description: "低コストの基本カード向け"
   },
   {
@@ -74,7 +83,7 @@ const CREATOR_TIERS = [
     minRarity: "R",
     maxAtk: 14,
     maxDef: 20,
-    spellMax: { draw: 3, maxCost: 2, heal: 18 },
+    spellMax: { draw: 3, maxCost: 2, heal: 60, graveHand: 2 },
     description: "序盤から中盤で使いやすいカード向け"
   },
   {
@@ -84,7 +93,7 @@ const CREATOR_TIERS = [
     minRarity: "SR",
     maxAtk: 22,
     maxDef: 32,
-    spellMax: { draw: 5, maxCost: 3, heal: 36 },
+    spellMax: { draw: 5, maxCost: 3, heal: 100, graveHand: 3 },
     description: "主力になる強力なカード向け"
   },
   {
@@ -94,7 +103,7 @@ const CREATOR_TIERS = [
     minRarity: "SSR",
     maxAtk: 34,
     maxDef: 48,
-    spellMax: { draw: 7, maxCost: 4, heal: 60 },
+    spellMax: { draw: 7, maxCost: 4, heal: 150, graveHand: 4 },
     description: "切り札級のカード向け"
   }
 ];
@@ -121,7 +130,7 @@ const CHARACTER_EFFECT_OPTIONS = [
     label: "召喚時HP回復",
     trigger: "summon",
     effect: "heal",
-    maxByTier: { n: 4, r: 10, sr: 20, ssr: 35 },
+    maxByTier: { n: 15, r: 30, sr: 55, ssr: 90 },
     description: "召喚した時、自分のHPを回復します。"
   },
   {
@@ -147,6 +156,22 @@ const CHARACTER_EFFECT_OPTIONS = [
     effect: "damage",
     maxByTier: { n: 3, r: 7, sr: 12, ssr: 20 },
     description: "攻撃した時、相手プレイヤーに追加ダメージを与えます。"
+  },
+  {
+    id: "summonGraveHand",
+    label: "召喚時手札を墓地へ",
+    trigger: "summon",
+    effect: "graveHand",
+    maxByTier: { n: 1, r: 1, sr: 2, ssr: 3 },
+    description: "召喚した時、手札を選んで墓地へ送り、そのコスト分レベルを上げます。"
+  },
+  {
+    id: "attackGraveHand",
+    label: "攻撃時手札を墓地へ",
+    trigger: "attack",
+    effect: "graveHand",
+    maxByTier: { n: 1, r: 1, sr: 2, ssr: 3 },
+    description: "攻撃した時、手札を選んで墓地へ送り、そのコスト分レベルを上げます。"
   }
 ];
 
@@ -161,8 +186,7 @@ const DEFAULT_CARDS = [
     cost: 1,
     atk: 2,
     def: 3,
-    abilities: [],
-    characterEffect: { trigger: "summon", effect: "heal", value: 4 }
+    abilities: []
   },
   {
     id: "char-sakura-swordsman",
@@ -174,8 +198,7 @@ const DEFAULT_CARDS = [
     cost: 4,
     atk: 8,
     def: 8,
-    abilities: [],
-    characterEffect: { trigger: "attack", effect: "level", value: 1 }
+    abilities: []
   },
   {
     id: "char-moon-fox",
@@ -187,8 +210,7 @@ const DEFAULT_CARDS = [
     cost: 4,
     atk: 10,
     def: 6,
-    abilities: [],
-    characterEffect: { trigger: "summon", effect: "draw", value: 1 }
+    abilities: []
   },
   {
     id: "char-flower-knight",
@@ -200,8 +222,7 @@ const DEFAULT_CARDS = [
     cost: 4,
     atk: 6,
     def: 12,
-    abilities: [],
-    characterEffect: { trigger: "summon", effect: "heal", value: 8 }
+    abilities: []
   },
   {
     id: "char-sakura-dragon",
@@ -213,8 +234,7 @@ const DEFAULT_CARDS = [
     cost: 8,
     atk: 18,
     def: 18,
-    abilities: [],
-    characterEffect: { trigger: "attack", effect: "damage", value: 15 }
+    abilities: []
   },
   {
     id: "char-holy-wall",
@@ -226,8 +246,7 @@ const DEFAULT_CARDS = [
     cost: 4,
     atk: 5,
     def: 16,
-    abilities: ["block"],
-    characterEffect: { trigger: "summon", effect: "heal", value: 8 }
+    abilities: ["block"]
   },
   {
     id: "char-wind-archer",
@@ -239,8 +258,7 @@ const DEFAULT_CARDS = [
     cost: 3,
     atk: 7,
     def: 6,
-    abilities: [],
-    characterEffect: { trigger: "attack", effect: "damage", value: 4 }
+    abilities: []
   },
   {
     id: "char-drop-mage",
@@ -252,8 +270,7 @@ const DEFAULT_CARDS = [
     cost: 5,
     atk: 9,
     def: 13,
-    abilities: [],
-    characterEffect: { trigger: "summon", effect: "draw", value: 1 }
+    abilities: []
   },
   {
     id: "spell-knowledge-book",
@@ -292,8 +309,8 @@ const DEFAULT_CARDS = [
     name: "生命の祈り",
     icon: "祈",
     rarity: "N",
-    cost: 2,
-    spell: { effect: "heal", value: 8 }
+    cost: 3,
+    spell: { effect: "heal", value: 40 }
   },
   {
     id: "char-crystal-lancer",
@@ -305,8 +322,7 @@ const DEFAULT_CARDS = [
     cost: 6,
     atk: 15,
     def: 14,
-    abilities: [],
-    characterEffect: { trigger: "attack", effect: "level", value: 2 }
+    abilities: []
   },
   {
     id: "char-rainbow-guardian",
@@ -318,8 +334,7 @@ const DEFAULT_CARDS = [
     cost: 6,
     atk: 10,
     def: 22,
-    abilities: ["block"],
-    characterEffect: { trigger: "summon", effect: "maxCost", value: 1 }
+    abilities: ["block"]
   },
   {
     id: "char-starlight-queen",
@@ -331,8 +346,7 @@ const DEFAULT_CARDS = [
     cost: 9,
     atk: 24,
     def: 20,
-    abilities: [],
-    characterEffect: { trigger: "summon", effect: "draw", value: 2 }
+    abilities: []
   },
   {
     id: "char-celestial-whale",
@@ -344,8 +358,7 @@ const DEFAULT_CARDS = [
     cost: 10,
     atk: 18,
     def: 32,
-    abilities: ["block"],
-    characterEffect: { trigger: "summon", effect: "maxCost", value: 2 }
+    abilities: ["block"]
   },
   {
     id: "spell-grand-library",
@@ -369,6 +382,160 @@ const DEFAULT_CARDS = [
   }
 ];
 
+const SET_2_CARDS = [
+  {
+    id: "char-mist-apprentice",
+    source: "set-2",
+    type: "character",
+    name: "霞の見習い",
+    icon: "霞",
+    rarity: "N",
+    cost: 2,
+    atk: 3,
+    def: 5,
+    abilities: [],
+    characterEffect: { trigger: "summon", effect: "graveHand", value: 1 }
+  },
+  {
+    id: "char-bell-recycler",
+    source: "set-2",
+    type: "character",
+    name: "鈴音の回収士",
+    icon: "鈴",
+    rarity: "R",
+    cost: 4,
+    atk: 7,
+    def: 9,
+    abilities: [],
+    characterEffect: { trigger: "summon", effect: "draw", value: 1 }
+  },
+  {
+    id: "char-azure-cleric",
+    source: "set-2",
+    type: "character",
+    name: "蒼羽の癒し手",
+    icon: "癒",
+    rarity: "R",
+    cost: 4,
+    atk: 5,
+    def: 13,
+    abilities: [],
+    characterEffect: { trigger: "summon", effect: "heal", value: 40 }
+  },
+  {
+    id: "char-twilight-alchemist",
+    source: "set-2",
+    type: "character",
+    name: "薄明の錬金士",
+    icon: "錬",
+    rarity: "SR",
+    cost: 6,
+    atk: 10,
+    def: 16,
+    abilities: [],
+    characterEffect: { trigger: "summon", effect: "graveHand", value: 2 }
+  },
+  {
+    id: "char-comet-duelist",
+    source: "set-2",
+    type: "character",
+    name: "彗星の決闘者",
+    icon: "彗",
+    rarity: "SR",
+    cost: 6,
+    atk: 16,
+    def: 12,
+    abilities: [],
+    characterEffect: { trigger: "attack", effect: "damage", value: 12 }
+  },
+  {
+    id: "char-lotus-oracle",
+    source: "set-2",
+    type: "character",
+    name: "蓮華の神託者",
+    icon: "蓮",
+    rarity: "SSR",
+    cost: 8,
+    atk: 16,
+    def: 24,
+    abilities: [],
+    characterEffect: { trigger: "summon", effect: "graveHand", value: 3 }
+  },
+  {
+    id: "char-sky-archive-dragon",
+    source: "set-2",
+    type: "character",
+    name: "天文庫の龍",
+    icon: "庫",
+    rarity: "SSR",
+    cost: 10,
+    atk: 24,
+    def: 26,
+    abilities: [],
+    characterEffect: { trigger: "attack", effect: "draw", value: 2 }
+  },
+  {
+    id: "spell-parting-bloom",
+    source: "set-2",
+    type: "spell",
+    name: "別れ花の儀",
+    icon: "別",
+    rarity: "N",
+    cost: 2,
+    spell: { effect: "graveHand", value: 1 }
+  },
+  {
+    id: "spell-memory-river",
+    source: "set-2",
+    type: "spell",
+    name: "記憶の小川",
+    icon: "記",
+    rarity: "R",
+    cost: 4,
+    spell: { effect: "graveHand", value: 2 }
+  },
+  {
+    id: "spell-moonlit-release",
+    source: "set-2",
+    type: "spell",
+    name: "月明かりの解放",
+    icon: "解",
+    rarity: "SR",
+    cost: 6,
+    spell: { effect: "graveHand", value: 3 }
+  },
+  {
+    id: "spell-sunrise-hymn",
+    source: "set-2",
+    type: "spell",
+    name: "朝焼けの賛歌",
+    icon: "朝",
+    rarity: "R",
+    cost: 4,
+    spell: { effect: "heal", value: 70 }
+  },
+  {
+    id: "spell-angel-rest",
+    source: "set-2",
+    type: "spell",
+    name: "天使の休息",
+    icon: "休",
+    rarity: "SSR",
+    cost: 7,
+    spell: { effect: "heal", value: 130 }
+  },
+  {
+    id: "spell-sage-contract",
+    source: "set-2",
+    type: "spell",
+    name: "賢者の契約",
+    icon: "契",
+    rarity: "SR",
+    cost: 5,
+    spell: { effect: "draw", value: 4 }
+  }
+];
+
 const GACHA_SETS = [
   {
     id: "set-1",
@@ -376,6 +543,13 @@ const GACHA_SETS = [
     name: "はじまりの桜星ガチャ",
     description: "桜、月、星海をテーマにした最初のカードパックです。",
     cardIds: DEFAULT_CARDS.map((card) => card.id)
+  },
+  {
+    id: "set-2",
+    label: "第2弾",
+    name: "記憶解放ガチャ",
+    description: "手札を墓地へ送り、レベルを伸ばすカードを中心にした第2弾パックです。",
+    cardIds: SET_2_CARDS.map((card) => card.id)
   }
 ];
 
@@ -402,6 +576,9 @@ const state = {
   inventory: {},
   creatorTickets: 0,
   gachaBalls: 0,
+  gold: 0,
+  questClears: [],
+  marketPurchases: { date: "", shop: [], auction: [] },
   lastDailyReward: "",
   gachaHistory: [],
   gachaResults: [],
@@ -410,6 +587,7 @@ const state = {
   battleHandSort: "draw",
   cardDetailId: null,
   cardDetailHandUid: null,
+  graveChoice: null,
   creatorDraft: {
     type: "character",
     tierId: "n",
@@ -454,6 +632,9 @@ function init() {
   state.inventory = readInventory();
   state.creatorTickets = readCreatorTickets();
   state.gachaBalls = readGachaBalls();
+  state.gold = readGold();
+  state.questClears = readQuestClears();
+  state.marketPurchases = readMarketPurchases();
   state.lastDailyReward = readLastDailyReward();
   state.gachaHistory = readGachaHistory();
   normalizeInventory();
@@ -485,6 +666,7 @@ function handleClick(event) {
   if (action === "screen") {
     state.cardDetailId = null;
     state.cardDetailHandUid = null;
+    state.graveChoice = null;
     state.screen = button.dataset.screen;
     render();
     return;
@@ -507,6 +689,21 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "toggle-grave-choice") {
+    toggleGraveChoice(button.dataset.uid);
+    return;
+  }
+
+  if (action === "confirm-grave-choice") {
+    confirmGraveChoice();
+    return;
+  }
+
+  if (action === "cancel-grave-choice") {
+    cancelGraveChoice();
+    return;
+  }
+
   if (action === "reset-deck") {
     state.deckIds = buildDefaultDeck();
     state.deckIds = sanitizeDeck(state.deckIds);
@@ -525,6 +722,26 @@ function handleClick(event) {
     state.activeGachaSetId = button.dataset.setId || DEFAULT_GACHA_SET_ID;
     state.gachaResults = [];
     render();
+    return;
+  }
+
+  if (action === "start-quest") {
+    startQuestBattle(button.dataset.stageId);
+    return;
+  }
+
+  if (action === "buy-shop-card") {
+    buyMarketListing("shop", button.dataset.listingId);
+    return;
+  }
+
+  if (action === "buy-auction-card") {
+    buyMarketListing("auction", button.dataset.listingId);
+    return;
+  }
+
+  if (action === "sell-card") {
+    sellOwnedCard(button.dataset.cardId);
     return;
   }
 
@@ -580,6 +797,14 @@ function handleClick(event) {
 
   if (action === "start-ai-battle") {
     startBattle("ai");
+    return;
+  }
+
+  if (action === "new-ai-battle") {
+    if (!window.confirm("現在のAI戦を終了して、新しいAI戦を始めますか？")) return;
+    state.battle = null;
+    clearSavedAiBattle();
+    startBattle("ai", { forceNew: true });
     return;
   }
 
@@ -641,8 +866,13 @@ function handleClick(event) {
 
   if (action === "new-battle") {
     const previousMode = state.battle?.mode || "local";
+    const previousQuestStageId = state.battle?.questStageId;
     state.battle = null;
     if (previousMode === "ai") clearSavedAiBattle();
+    if (previousMode === "quest" && previousQuestStageId) {
+      startQuestBattle(previousQuestStageId);
+      return;
+    }
     startBattle(previousMode, { forceNew: true });
   }
 }
@@ -678,6 +908,57 @@ function render() {
     </div>
     ${renderFxOverlay()}
     ${renderCardDetailOverlay()}
+    ${renderGraveChoiceOverlay()}
+  `;
+}
+
+function renderGraveChoiceOverlay() {
+  const choice = state.graveChoice;
+  const battle = state.battle;
+  if (!choice || !battle) return "";
+  const player = battle.players[choice.playerIndex];
+  if (!player) return "";
+  const selected = new Set(choice.selectedUids || []);
+  const selectableCards = player.hand
+    .map((handCard) => ({ handCard, card: getCard(handCard.cardId) }))
+    .filter((entry) => entry.card);
+  const selectedCost = selectableCards
+    .filter((entry) => selected.has(entry.handCard.uid))
+    .reduce((sum, entry) => sum + entry.card.cost, 0);
+  const max = Math.max(1, choice.max || 1);
+  return `
+    <div class="card-detail-overlay grave-choice-overlay" role="dialog" aria-modal="true" aria-label="墓地へ送るカード選択">
+      <div class="card-detail-panel grave-choice-panel">
+        <div class="card-detail-top">
+          <strong>手札を墓地へ送る</strong>
+          <button class="ghost" data-action="cancel-grave-choice">やめる</button>
+        </div>
+        <div class="notice">
+          ${escapeHtml(choice.sourceName)}の効果です。手札から最大${max}枚選び、墓地へ送ります。送ったカードのコスト分レベルが上がります。
+        </div>
+        <div class="toolbar">
+          <span class="pill aqua">選択 ${selected.size}/${max}枚</span>
+          <span class="pill pink">LV +${selectedCost}</span>
+        </div>
+        <div class="grave-choice-list">
+          ${selectableCards.length ? selectableCards.map(({ handCard, card }) => {
+            const isSelected = selected.has(handCard.uid);
+            const disabled = !isSelected && selected.size >= max;
+            return `
+              <button class="grave-choice-card ${isSelected ? "selected" : ""}" data-action="toggle-grave-choice" data-uid="${handCard.uid}" ${disabled ? "disabled" : ""}>
+                <span class="grave-choice-name">${escapeHtml(card.name)}</span>
+                <span class="pill strong">コスト ${card.cost}</span>
+                <small>${escapeHtml(cardEffectText(card))}</small>
+              </button>
+            `;
+          }).join("") : `<div class="empty-field">選べる手札がありません</div>`}
+        </div>
+        <div class="detail-actions">
+          <button class="accent" data-action="confirm-grave-choice" ${selected.size ? "" : "disabled"}>選んだカードを墓地へ送る</button>
+          <button data-action="cancel-grave-choice">送らない</button>
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -733,6 +1014,8 @@ function renderTopbar() {
       <nav class="top-actions" aria-label="メインメニュー">
         <button class="ghost" data-action="screen" data-screen="menu">メニュー</button>
         <button class="ghost" data-action="screen" data-screen="gacha">ガチャ</button>
+        <button class="ghost" data-action="screen" data-screen="quest">クエスト</button>
+        <button class="ghost" data-action="screen" data-screen="market">ショップ</button>
         <button class="ghost" data-action="screen" data-screen="deck">山札編成</button>
         <button class="ghost" data-action="screen" data-screen="creator">カード作成</button>
         <button class="ghost" data-action="screen" data-screen="cloud">クラウド保存</button>
@@ -745,6 +1028,8 @@ function renderTopbar() {
 
 function renderScreen() {
   if (state.screen === "gacha") return renderGacha();
+  if (state.screen === "quest") return renderQuest();
+  if (state.screen === "market") return renderMarket();
   if (state.screen === "deck") return renderDeckBuilder();
   if (state.screen === "creator") return renderCardCreator();
   if (state.screen === "battle") return renderBattle();
@@ -757,6 +1042,8 @@ function renderMenu() {
   return `
     <section class="menu-grid">
       ${renderMenuTile("ガチャ", "ガチャ玉を使ってカードと創造チケットを入手します。", "召", "gacha")}
+      ${renderMenuTile("クエスト", "ステージを順番にクリアしてゴールドを集めます。", "冒", "quest")}
+      ${renderMenuTile("ショップ・オークション", "ゴールドでカードを買ったり、余ったカードを売却します。", "市", "market")}
       ${renderMenuTile("山札編成", "100〜300枚の山札を所持カードと作成カードから組みます。", "山", "deck")}
       ${renderMenuTile("カード作成", "ガチャで入手した創造チケットを消費してカードを作ります。", "作", "creator")}
       ${renderMenuTile("クラウド保存", "Googleアカウントでログインして別端末にもデータを引き継ぎます。", "雲", "cloud")}
@@ -779,6 +1066,153 @@ function renderMenuTile(title, body, icon, screen) {
       <span class="menu-icon">${escapeHtml(icon)}</span>
       <span><strong>${escapeHtml(title)}</strong>${escapeHtml(body)}</span>
     </button>
+  `;
+}
+
+function renderQuest() {
+  const nextStage = getHighestUnlockedQuestNumber();
+  return `
+    <section class="stack">
+      <div class="band">
+        <div class="section-title">
+          <div>
+            <h2>クエスト</h2>
+            <p>1-1から順番に進みます。各エリアは10ステージで、クリアすると次のステージが解放されます。</p>
+          </div>
+          <div class="toolbar">
+            <span class="pill mint strong">${GOLD_NAME} ${state.gold}</span>
+            <span class="pill aqua">次 ${formatQuestStageId(numberToQuestStage(nextStage))}</span>
+            <span class="pill pink">クリア ${state.questClears.length}/${QUEST_AREA_COUNT * QUEST_STAGES_PER_AREA}</span>
+          </div>
+        </div>
+      </div>
+      ${Array.from({ length: QUEST_AREA_COUNT }, (_, areaIndex) => renderQuestArea(areaIndex + 1)).join("")}
+    </section>
+  `;
+}
+
+function renderQuestArea(area) {
+  return `
+    <div class="band quest-area">
+      <div class="section-title">
+        <div>
+          <h3>エリア ${area}</h3>
+          <p>${escapeHtml(getQuestAreaName(area))}</p>
+        </div>
+      </div>
+      <div class="quest-grid">
+        ${Array.from({ length: QUEST_STAGES_PER_AREA }, (_, stageIndex) => renderQuestStageButton(createQuestStage(area, stageIndex + 1))).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderQuestStageButton(stage) {
+  const unlocked = isQuestStageUnlocked(stage);
+  const cleared = isQuestStageCleared(stage.id);
+  return `
+    <button class="quest-stage ${cleared ? "cleared" : ""}" data-action="start-quest" data-stage-id="${stage.id}" ${unlocked ? "" : "disabled"}>
+      <strong>${escapeHtml(stage.id)}</strong>
+      <span>${cleared ? "CLEAR" : unlocked ? "挑戦" : "LOCK"}</span>
+      <small>${GOLD_NAME} ${stage.rewardGold}</small>
+      <small>初回 ${GACHA_BALL_NAME} ${QUEST_FIRST_CLEAR_GACHA_BALL_REWARD}個</small>
+    </button>
+  `;
+}
+
+function renderMarket() {
+  const shopListings = getDailyShopListings();
+  const auctionListings = getDailyAuctionListings();
+  const sellableCards = getSellableCards();
+  return `
+    <section class="stack">
+      <div class="band">
+        <div class="section-title">
+          <div>
+            <h2>ショップ・オークション</h2>
+            <p>クエストで集めた${GOLD_NAME}を使ってカードを入手します。オークションは現在NPC出品です。</p>
+          </div>
+          <div class="toolbar">
+            <span class="pill mint strong">${GOLD_NAME} ${state.gold}</span>
+            <span class="pill aqua">毎日入れ替え</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="band">
+        <div class="section-title">
+          <div>
+            <h3>デイリーショップ</h3>
+            <p>表示中のカードを固定価格で1枚ずつ購入できます。</p>
+          </div>
+        </div>
+        <div class="market-grid">
+          ${shopListings.map((listing) => renderMarketListing(listing, "shop")).join("")}
+        </div>
+      </div>
+
+      <div class="band">
+        <div class="section-title">
+          <div>
+            <h3>カードオークション</h3>
+            <p>NPC出品のカードを落札します。オンライン版ではユーザー同士の出品に置き換えられます。</p>
+          </div>
+        </div>
+        <div class="market-grid">
+          ${auctionListings.map((listing) => renderMarketListing(listing, "auction")).join("")}
+        </div>
+      </div>
+
+      <div class="band">
+        <div class="section-title">
+          <div>
+            <h3>カード売却</h3>
+            <p>山札に入れていない余りカードだけ売却できます。</p>
+          </div>
+        </div>
+        <div class="market-sell-list">
+          ${sellableCards.length ? sellableCards.map(renderSellableCard).join("") : `<div class="empty-field">売却できる余りカードがありません</div>`}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderMarketListing(listing, type) {
+  const card = getCard(listing.cardId);
+  if (!card) return "";
+  const purchased = isMarketListingPurchased(type, listing.id);
+  const canBuy = !purchased && state.gold >= listing.price;
+  return `
+    <article class="market-card">
+      ${renderGameCard(card, { mode: "library", staticCard: true })}
+      <div class="market-price-row">
+        <span class="pill mint strong">${GOLD_NAME} ${listing.price}</span>
+        ${type === "auction" ? `<span class="pill aqua">NPC出品</span>` : `<span class="pill">固定価格</span>`}
+      </div>
+      <button class="${type === "auction" ? "accent" : "primary"}" data-action="${type === "auction" ? "buy-auction-card" : "buy-shop-card"}" data-listing-id="${listing.id}" ${canBuy ? "" : "disabled"}>
+        ${purchased ? "購入済み" : type === "auction" ? "落札する" : "購入する"}
+      </button>
+      ${!purchased && state.gold < listing.price ? `<small class="market-note">${GOLD_NAME}が足りません</small>` : ""}
+    </article>
+  `;
+}
+
+function renderSellableCard(entry) {
+  return `
+    <div class="market-sell-row">
+      <div>
+        ${renderMiniCardHeader(entry.card)}
+        <div class="toolbar" style="margin-top: 6px;">
+          ${renderCardPills(entry.card)}
+          <span class="pill">余り ${entry.sellable}枚</span>
+        </div>
+      </div>
+      <div class="market-sell-action">
+        <span class="pill mint strong">+${entry.price} ${GOLD_NAME}</span>
+        <button data-action="sell-card" data-card-id="${entry.card.id}">1枚売却</button>
+      </div>
+    </div>
   `;
 }
 
@@ -831,6 +1265,7 @@ function renderCloudSave() {
           </div>
           <div class="cloud-save-list">
             <span>ガチャ玉 ${state.gachaBalls}個</span>
+            <span>${GOLD_NAME} ${state.gold}</span>
             <span>${CREATOR_TICKET_NAME} ${state.creatorTickets}枚</span>
             <span>所持カード ${Object.values(state.inventory).reduce((sum, count) => sum + count, 0)}枚</span>
             <span>山札 ${state.deckIds.length}枚</span>
@@ -914,7 +1349,7 @@ function renderGacha() {
         <div class="section-title">
           <div>
             <h2>ガチャ</h2>
-            <p>現在は${escapeHtml(activeSet.label)}です。あとから第2弾、第3弾を追加できる形にしています。</p>
+            <p>現在は${escapeHtml(activeSet.label)}です。弾を切り替えて提供カードを確認できます。</p>
           </div>
           <div class="toolbar">
             <span class="pill mint strong">${GACHA_BALL_NAME} ${state.gachaBalls}個</span>
@@ -1201,6 +1636,7 @@ function renderSpellCreatorFields(draft, tier) {
         <option value="draw" ${draft.effect === "draw" ? "selected" : ""}>山札からドロー</option>
         <option value="maxCost" ${draft.effect === "maxCost" ? "selected" : ""}>最大コストを恒久増加</option>
         <option value="heal" ${draft.effect === "heal" ? "selected" : ""}>HP回復</option>
+        <option value="graveHand" ${draft.effect === "graveHand" ? "selected" : ""}>手札を墓地へ送る</option>
       </select>
     </label>
     <label>
@@ -1272,7 +1708,7 @@ function renderBattleIntro() {
 
 function renderRoulette(battle) {
   const hasResult = Number.isInteger(battle.firstPlayer);
-  const waitingText = battle.mode === "ai" ? "YOU / AI" : "P1 / P2";
+  const waitingText = isCpuBattleMode(battle.mode) ? "YOU / CPU" : "P1 / P2";
   return `
     <section class="center-stage">
       <div class="roulette band">
@@ -1289,7 +1725,7 @@ function renderRoulette(battle) {
 
 function renderHandoff(battle) {
   const next = battle.players[battle.nextActivePlayer];
-  if (battle.mode === "ai") {
+  if (isCpuBattleMode(battle.mode)) {
     return renderBattleBoard(battle);
   }
   return `
@@ -1405,7 +1841,7 @@ function getSortedHand(hand) {
 }
 
 function renderBattleBoard(battle) {
-  if (battle.mode === "ai") {
+  if (isCpuBattleMode(battle.mode)) {
     return renderAiBattleBoard(battle);
   }
   const active = battle.players[battle.activePlayer];
@@ -1467,7 +1903,8 @@ function renderAiBattleBoard(battle) {
         <span class="pill aqua">ターン ${battle.turnNumber}</span>
         <span class="pill mint">倍率 ${formatMultiplier(levelMultiplier(battle.players[battle.activePlayer].level))}</span>
         ${battle.pendingAttackerUid && humanActive ? `<button data-action="cancel-attack">攻撃選択を解除</button>` : ""}
-        ${isAiTurn(battle) ? `<span class="pill aqua strong">AIが行動中</span>` : `<button class="accent" data-action="end-turn">ターンエンド</button>`}
+        ${isAiTurn(battle) ? `<span class="pill aqua strong">${escapeHtml(ai.name)}が行動中</span>` : `<button class="accent" data-action="end-turn">ターンエンド</button>`}
+        ${battle.mode === "ai" ? `<button data-action="new-ai-battle">新規AI戦</button>` : `<button data-action="screen" data-screen="quest">クエスト選択</button>`}
         <button class="danger" data-action="surrender">降参</button>
       </div>
       <div class="board">
@@ -1490,8 +1927,8 @@ function renderAiBattleBoard(battle) {
         <div class="band hand-zone hidden-hand-zone">
           <div class="section-title">
             <div>
-              <h3>AIの手札</h3>
-              <p>AIの手札は非公開です。枚数だけ表示します。</p>
+              <h3>${escapeHtml(ai.name)}の手札</h3>
+              <p>相手の手札は非公開です。枚数だけ表示します。</p>
             </div>
           </div>
           <div class="card-back-row">
@@ -1507,13 +1944,16 @@ function renderAiBattleBoard(battle) {
 function renderScoreboard(battle) {
   return `
     <div class="scoreboard">
-      ${battle.players.map((player, index) => renderPlayerPanel(player, index === battle.activePlayer)).join("")}
+      ${battle.players.map((player, index) => renderPlayerPanel(player, index === battle.activePlayer, battle.initialDeckSize)).join("")}
     </div>
   `;
 }
 
-function renderPlayerPanel(player, active) {
-  const hpRate = Math.max(0, Math.min(100, (player.hp / MAX_HP) * 100));
+function renderPlayerPanel(player, active, initialDeckSize = null) {
+  const maxHp = player.maxHp || MAX_HP;
+  const hpRate = Math.max(0, Math.min(100, (player.hp / maxHp) * 100));
+  const currentCardTotal = countBattleCards(player);
+  const cardTotalText = Number.isFinite(initialDeckSize) ? `${currentCardTotal}/${initialDeckSize}` : String(currentCardTotal);
   return `
     <div class="player-panel ${active ? "active" : ""}">
       <div class="player-top">
@@ -1522,15 +1962,21 @@ function renderPlayerPanel(player, active) {
       </div>
       <div class="hp-bar"><div class="hp-fill" style="width: ${hpRate}%"></div></div>
       <div class="toolbar">
-        <span class="pill strong">HP ${Math.max(0, Math.ceil(player.hp))}/${MAX_HP}</span>
+        <span class="pill strong">HP ${Math.max(0, Math.ceil(player.hp))}/${maxHp}</span>
         <span class="pill aqua">コスト ${player.currentCost}/${player.maxCost}</span>
         <span class="pill pink">LV ${player.level}</span>
         <span class="pill mint">倍率 ${formatMultiplier(levelMultiplier(player.level))}</span>
         <span class="pill">山札 ${player.deck.length}</span>
         <span class="pill">墓地 ${player.grave.length}</span>
+        <span class="pill">カード ${cardTotalText}</span>
       </div>
     </div>
   `;
+}
+
+function countBattleCards(player) {
+  if (!player) return 0;
+  return player.deck.length + player.hand.length + player.field.length + player.grave.length;
 }
 
 function renderFieldZone(battle, ownerIndex) {
@@ -1656,6 +2102,7 @@ function shortSpellLabel(spell) {
   if (spell.effect === "draw") return `${effectiveDrawValue(spell.value)}ドロー`;
   if (spell.effect === "maxCost") return `コスト+${spell.value}`;
   if (spell.effect === "heal") return `${spell.value}回復`;
+  if (spell.effect === "graveHand") return `手札${spell.value}墓地`;
   return "効果";
 }
 
@@ -2031,6 +2478,7 @@ function startBattle(mode = "local", options = {}) {
     aiScheduled: false,
     aiThinking: false,
     pendingAttackerUid: null,
+    initialDeckSize: state.deckIds.length,
     turnNumber: 0,
     winner: null,
     rewardGranted: false,
@@ -2048,7 +2496,79 @@ function startBattle(mode = "local", options = {}) {
   state.screen = "battle";
   state.cardDetailId = null;
   state.cardDetailHandUid = null;
+  state.graveChoice = null;
   render();
+}
+
+function startQuestBattle(stageId) {
+  const stage = getQuestStage(stageId);
+  if (!stage || !isQuestStageUnlocked(stage)) {
+    showToast("このクエストはまだ解放されていません。");
+    return;
+  }
+
+  state.deckIds = sanitizeDeck(state.deckIds);
+  saveDeck();
+  if (state.deckIds.length < MIN_DECK_SIZE || state.deckIds.length > DECK_SIZE) {
+    state.screen = "deck";
+    showToast("クエスト開始には所持枚数内で作った山札が100〜300枚必要です。");
+    render();
+    return;
+  }
+
+  const p1Deck = shuffle([...state.deckIds]);
+  const enemyDeck = buildQuestEnemyDeck(stage);
+  const battle = {
+    mode: "quest",
+    phase: "battle",
+    questStageId: stage.id,
+    questRewardGold: stage.rewardGold,
+    firstPlayer: 0,
+    activePlayer: null,
+    nextActivePlayer: null,
+    aiPlayer: 1,
+    aiScheduled: false,
+    aiThinking: false,
+    pendingAttackerUid: null,
+    initialDeckSize: state.deckIds.length,
+    turnNumber: 0,
+    winner: null,
+    rewardGranted: false,
+    players: [
+      createPlayer("あなた", p1Deck),
+      createPlayer(stage.enemyName, enemyDeck)
+    ],
+    log: []
+  };
+
+  battle.players[1].hp = stage.enemyHp;
+  battle.players[1].maxHp = stage.enemyHp;
+  battle.players[1].level = stage.enemyLevel;
+  drawCards(battle, 0, INITIAL_HAND, false);
+  drawCards(battle, 1, INITIAL_HAND, false);
+  battle.log.push(`クエスト${stage.id}開始。${stage.enemyName}が立ちはだかります。`);
+  state.battle = battle;
+  state.screen = "battle";
+  state.cardDetailId = null;
+  state.cardDetailHandUid = null;
+  state.graveChoice = null;
+  startTurn(battle, 0);
+  render();
+}
+
+function buildQuestEnemyDeck(stage) {
+  const allowedRarityIndex = stage.number < 11 ? 1 : stage.number < 26 ? 2 : 3;
+  const cards = [...DEFAULT_CARDS, ...SET_2_CARDS].filter((card) => RARITY_ORDER.indexOf(card.rarity || "N") <= allowedRarityIndex);
+  const weightedPool = cards.flatMap((card) => {
+    const rarityIndex = RARITY_ORDER.indexOf(card.rarity || "N");
+    const weight = Math.max(1, 8 - rarityIndex * 2 + Math.floor(stage.number / 12));
+    return Array.from({ length: weight }, () => card.id);
+  });
+  const deck = [];
+  while (deck.length < DECK_SIZE) {
+    deck.push(randomItem(weightedPool));
+  }
+  return shuffle(deck);
 }
 
 function spinRoulette() {
@@ -2083,7 +2603,7 @@ function startTurn(battle, playerIndex) {
   battle.activePlayer = playerIndex;
   battle.nextActivePlayer = null;
   battle.pendingAttackerUid = null;
-  battle.aiThinking = battle.mode === "ai" && playerIndex === battle.aiPlayer;
+  battle.aiThinking = isCpuBattleMode(battle.mode) && playerIndex === battle.aiPlayer;
   battle.turnNumber += 1;
   player.ownTurns += 1;
   player.maxCost += 1;
@@ -2102,7 +2622,7 @@ function endTurn() {
   battle.pendingAttackerUid = null;
   battle.nextActivePlayer = 1 - battle.activePlayer;
   battle.log.push(`${battle.players[battle.activePlayer].name}がターンエンドしました。`);
-  if (battle.mode === "ai") {
+  if (isCpuBattleMode(battle.mode)) {
     startTurn(battle, battle.nextActivePlayer);
     render();
     maybeScheduleAiTurn();
@@ -2146,6 +2666,8 @@ function playHandCard(uid) {
     player.currentCost -= card.cost;
     player.hand.splice(handIndex, 1);
     player.grave.push(card.id);
+    player.level += card.cost;
+    battle.log.push(`${player.name}の${card.name}が使用後に墓地へ送られ、レベルが${player.level}になりました。`);
     resolveSpell(battle, player, card);
     setFx("spell", "呪文発動", card.name, card.rarity || "N");
   }
@@ -2177,6 +2699,98 @@ function sendHandCardToGrave(uid) {
   state.cardDetailId = null;
   state.cardDetailHandUid = null;
   render();
+}
+
+function startHandGraveChoice(battle, player, count, sourceName) {
+  const playerIndex = battle.players.indexOf(player);
+  if (playerIndex === -1) return;
+  const max = Math.max(1, clampInteger(count, 1, 10));
+  if (!player.hand.length) {
+    battle.log.push(`${player.name}は${sourceName}の効果で墓地へ送れる手札がありませんでした。`);
+    return;
+  }
+  if (isCpuBattleMode(battle.mode) && playerIndex === battle.aiPlayer) {
+    const selectedUids = chooseAutoGraveHandUids(player, max);
+    sendHandCardsToGraveByUid(battle, player, selectedUids, sourceName);
+    return;
+  }
+  state.cardDetailId = null;
+  state.cardDetailHandUid = null;
+  state.graveChoice = {
+    playerIndex,
+    max,
+    sourceName,
+    selectedUids: []
+  };
+}
+
+function chooseAutoGraveHandUids(player, max) {
+  return player.hand
+    .map((handCard) => ({ handCard, card: getCard(handCard.cardId) }))
+    .filter((entry) => entry.card)
+    .sort((a, b) => b.card.cost - a.card.cost)
+    .slice(0, max)
+    .map((entry) => entry.handCard.uid);
+}
+
+function toggleGraveChoice(uid) {
+  const choice = state.graveChoice;
+  const battle = state.battle;
+  if (!choice || !battle || !uid) return;
+  const player = battle.players[choice.playerIndex];
+  if (!player || !player.hand.some((handCard) => handCard.uid === uid)) return;
+  const selected = new Set(choice.selectedUids || []);
+  if (selected.has(uid)) {
+    selected.delete(uid);
+  } else if (selected.size < choice.max) {
+    selected.add(uid);
+  }
+  choice.selectedUids = [...selected];
+  render();
+}
+
+function confirmGraveChoice() {
+  const choice = state.graveChoice;
+  const battle = state.battle;
+  if (!choice || !battle) return;
+  const player = battle.players[choice.playerIndex];
+  state.graveChoice = null;
+  if (!player) {
+    render();
+    return;
+  }
+  sendHandCardsToGraveByUid(battle, player, choice.selectedUids || [], choice.sourceName);
+  checkBattleEnd(battle);
+  render();
+}
+
+function cancelGraveChoice() {
+  state.graveChoice = null;
+  render();
+}
+
+function sendHandCardsToGraveByUid(battle, player, uids, sourceName) {
+  const uniqueUids = [...new Set(uids || [])];
+  const sentNames = [];
+  let levelGain = 0;
+  uniqueUids.forEach((uid) => {
+    const handIndex = player.hand.findIndex((handCard) => handCard.uid === uid);
+    if (handIndex === -1) return;
+    const handCard = player.hand[handIndex];
+    const card = getCard(handCard.cardId);
+    if (!card) return;
+    player.hand.splice(handIndex, 1);
+    player.grave.push(card.id);
+    player.level += card.cost;
+    levelGain += card.cost;
+    sentNames.push(card.name);
+  });
+  if (!sentNames.length) {
+    battle.log.push(`${player.name}は${sourceName}の効果で手札を墓地へ送りませんでした。`);
+    return;
+  }
+  battle.log.push(`${player.name}が${sourceName}の効果で${sentNames.join("、")}を墓地へ送り、レベルが${player.level}になりました。`);
+  setFx("level", "墓地送り", `LV +${levelGain}`, "SR");
 }
 
 function selectAttacker(uid) {
@@ -2254,7 +2868,7 @@ function attackPlayer() {
 function surrender() {
   const battle = state.battle;
   if (!isBattleActive()) return;
-  if (battle.mode === "ai") {
+  if (isCpuBattleMode(battle.mode)) {
     battle.winner = battle.aiPlayer;
     battle.phase = "over";
     battle.rewardGranted = true;
@@ -2286,6 +2900,11 @@ function resolveSpell(battle, player, card) {
     const before = player.hp;
     player.hp = Math.min(MAX_HP, player.hp + spell.value);
     battle.log.push(`${player.name}が${card.name}を使い、HPを${Math.ceil(player.hp - before)}回復しました。`);
+    return;
+  }
+  if (spell.effect === "graveHand") {
+    battle.log.push(`${player.name}が${card.name}を使い、手札を墓地へ送るカードを選びます。`);
+    startHandGraveChoice(battle, player, spell.value, card.name);
   }
 }
 
@@ -2327,6 +2946,12 @@ function resolveCharacterEffect(battle, owner, opponent, card, trigger) {
   if (characterEffect.effect === "damage") {
     opponent.hp -= value;
     battle.log.push(`${owner.name}の${card.name}の${triggerText}。${opponent.name}に${value}追加ダメージ。`);
+    return;
+  }
+
+  if (characterEffect.effect === "graveHand") {
+    battle.log.push(`${owner.name}の${card.name}の${triggerText}。手札を墓地へ送るカードを選びます。`);
+    startHandGraveChoice(battle, owner, value, card.name);
   }
 }
 
@@ -2423,6 +3048,9 @@ function tryAiUseSpell(battle) {
   const healSpell = playable.find((entry) => entry.card.spell.effect === "heal" && ai.hp <= MAX_HP - entry.card.spell.value);
   if (healSpell) return aiPlayHandIndex(battle, healSpell.index);
 
+  const graveHandSpell = playable.find((entry) => entry.card.spell.effect === "graveHand" && ai.hand.length > 1);
+  if (graveHandSpell) return aiPlayHandIndex(battle, graveHandSpell.index);
+
   const drawSpell = playable.find((entry) => entry.card.spell.effect === "draw" && ai.hand.length <= 7 && ai.deck.length >= effectiveDrawValue(entry.card.spell.value));
   if (drawSpell) return aiPlayHandIndex(battle, drawSpell.index);
 
@@ -2474,6 +3102,8 @@ function aiPlayHandIndex(battle, handIndex) {
     ai.currentCost -= card.cost;
     ai.hand.splice(handIndex, 1);
     ai.grave.push(card.id);
+    ai.level += card.cost;
+    battle.log.push(`AIの${card.name}が使用後に墓地へ送られ、レベルが${ai.level}になりました。`);
     resolveSpell(battle, ai, card);
     setFx("spell", "AI呪文", card.name, card.rarity || "N");
   }
@@ -2576,7 +3206,11 @@ function aiCardScore(card) {
 }
 
 function isAiTurn(battle = state.battle) {
-  return Boolean(battle && battle.mode === "ai" && battle.phase === "battle" && battle.activePlayer === battle.aiPlayer);
+  return Boolean(battle && isCpuBattleMode(battle.mode) && battle.phase === "battle" && battle.activePlayer === battle.aiPlayer);
+}
+
+function isCpuBattleMode(mode) {
+  return mode === "ai" || mode === "quest";
 }
 
 function findBlocker(player, targetUid) {
@@ -2608,12 +3242,36 @@ function checkBattleEnd(battle) {
 }
 
 function grantBattleReward(battle) {
-  if (!battle || battle.mode !== "ai" || battle.rewardGranted || !Number.isInteger(battle.winner)) return;
-  const reward = battle.winner === 0 ? AI_WIN_GACHA_BALL_REWARD : AI_LOSE_GACHA_BALL_REWARD;
-  battle.rewardGranted = true;
-  state.gachaBalls += reward;
-  saveGachaBalls();
-  battle.log.push(`${GACHA_BALL_NAME}を${reward}個入手しました。`);
+  if (!battle || battle.rewardGranted || !Number.isInteger(battle.winner)) return;
+  if (battle.mode === "ai") {
+    const reward = battle.winner === 0 ? AI_WIN_GACHA_BALL_REWARD : AI_LOSE_GACHA_BALL_REWARD;
+    battle.rewardGranted = true;
+    state.gachaBalls += reward;
+    saveGachaBalls();
+    battle.log.push(`${GACHA_BALL_NAME}を${reward}個入手しました。`);
+    return;
+  }
+  if (battle.mode === "quest") {
+    battle.rewardGranted = true;
+    if (battle.winner !== 0) {
+      battle.log.push("クエストに敗北しました。ゴールドは入手できません。");
+      return;
+    }
+    const stage = getQuestStage(battle.questStageId);
+    if (!stage) return;
+    const firstClear = !isQuestStageCleared(stage.id);
+    const reward = firstClear ? stage.rewardGold : Math.max(10, Math.ceil(stage.rewardGold * 0.35));
+    state.gold += reward;
+    if (firstClear) {
+      state.questClears.push(stage.id);
+      state.questClears = normalizeQuestClears(state.questClears);
+      state.gachaBalls += QUEST_FIRST_CLEAR_GACHA_BALL_REWARD;
+      saveQuestClears();
+      saveGachaBalls();
+    }
+    saveGold();
+    battle.log.push(`${stage.id}を${firstClear ? "初クリア" : "再クリア"}しました。${GOLD_NAME}を${reward}入手しました。${firstClear ? `${GACHA_BALL_NAME}を${QUEST_FIRST_CLEAR_GACHA_BALL_REWARD}個入手しました。` : ""}`);
+  }
 }
 
 function isBattleActive() {
@@ -2624,6 +3282,7 @@ function createPlayer(name, deck) {
   return {
     name,
     hp: MAX_HP,
+    maxHp: MAX_HP,
     level: 0,
     maxCost: 0,
     currentCost: 0,
@@ -2636,11 +3295,221 @@ function createPlayer(name, deck) {
 }
 
 function getCards() {
-  return [...DEFAULT_CARDS, ...state.customCards];
+  return [...DEFAULT_CARDS, ...SET_2_CARDS, ...state.customCards];
 }
 
 function getCard(cardId) {
   return getCards().find((card) => card.id === cardId);
+}
+
+function getMarketBaseCards() {
+  return [...DEFAULT_CARDS, ...SET_2_CARDS];
+}
+
+function getDailyShopListings() {
+  const day = localDateKey(new Date());
+  return seededShuffle(getMarketBaseCards(), `shop:${day}`)
+    .slice(0, MARKET_SHOP_LISTING_COUNT)
+    .map((card, index) => ({
+      id: `shop-${day}-${index}-${card.id}`,
+      cardId: card.id,
+      price: Math.ceil(calculateMarketCardPrice(card) * 1.08)
+    }));
+}
+
+function getDailyAuctionListings() {
+  const day = localDateKey(new Date());
+  return seededShuffle(getMarketBaseCards(), `auction:${day}`)
+    .slice(0, MARKET_AUCTION_LISTING_COUNT)
+    .map((card, index) => {
+      const variance = 0.72 + seededRandom(`${day}:${card.id}:auction-price`) * 0.58;
+      return {
+        id: `auction-${day}-${index}-${card.id}`,
+        cardId: card.id,
+        price: Math.max(10, Math.ceil(calculateMarketCardPrice(card) * variance))
+      };
+    });
+}
+
+function calculateMarketCardPrice(card) {
+  const rarityBase = { N: 70, R: 180, SR: 520, SSR: 1400 };
+  const rarity = card.rarity || "N";
+  const statValue = card.type === "character"
+    ? Math.ceil(((card.atk || 0) * 1.2 + (card.def || 0)) * 6)
+    : 0;
+  const abilityValue = (card.abilities?.length || 0) * 90 + characterEffectCostBonus(card.characterEffect) * 14;
+  const spellValue = card.type === "spell" ? calculateSpellCost(card.spell?.effect, card.spell?.value || 1) * 45 : 0;
+  return Math.max(40, (rarityBase[rarity] || 70) + card.cost * 35 + statValue + abilityValue + spellValue);
+}
+
+function getSellPrice(card) {
+  return Math.max(15, Math.floor(calculateMarketCardPrice(card) * 0.38));
+}
+
+function getSellableCards() {
+  const deckCounts = countDeckIds(state.deckIds);
+  return sortCardsByRarity(getCards())
+    .map((card) => {
+      const owned = getOwnedCount(card.id);
+      const inDeck = deckCounts[card.id] || 0;
+      const sellable = Math.max(0, owned - inDeck);
+      return { card, sellable, price: getSellPrice(card) };
+    })
+    .filter((entry) => entry.sellable > 0);
+}
+
+function buyMarketListing(type, listingId) {
+  const listings = type === "auction" ? getDailyAuctionListings() : getDailyShopListings();
+  const listing = listings.find((entry) => entry.id === listingId);
+  if (!listing) {
+    showToast("この出品は見つかりませんでした。");
+    return;
+  }
+  if (isMarketListingPurchased(type, listing.id)) {
+    showToast("この出品は購入済みです。");
+    return;
+  }
+  const card = getCard(listing.cardId);
+  if (!card) return;
+  if (state.gold < listing.price) {
+    showToast(`${GOLD_NAME}が足りません。`);
+    return;
+  }
+  state.gold -= listing.price;
+  addInventory(card.id, 1);
+  markMarketListingPurchased(type, listing.id);
+  saveGold();
+  saveInventory();
+  setFx(type === "auction" ? "auction" : "shop", type === "auction" ? "落札成功" : "購入完了", card.name, card.rarity || "N");
+  showToast(`${card.name}を1枚入手しました。${GOLD_NAME}を${listing.price}使いました。`);
+  render();
+}
+
+function sellOwnedCard(cardId) {
+  const card = getCard(cardId);
+  if (!card) return;
+  const deckCount = state.deckIds.filter((id) => id === card.id).length;
+  const owned = getOwnedCount(card.id);
+  if (owned <= deckCount) {
+    showToast("山札に入っている分は売却できません。");
+    return;
+  }
+  const price = getSellPrice(card);
+  state.inventory[card.id] = owned - 1;
+  if (state.inventory[card.id] <= 0) delete state.inventory[card.id];
+  state.gold += price;
+  saveInventory();
+  saveGold();
+  showToast(`${card.name}を1枚売却し、${GOLD_NAME}を${price}入手しました。`);
+  render();
+}
+
+function isMarketListingPurchased(type, listingId) {
+  const purchases = getMarketPurchasesForToday();
+  return purchases[type]?.includes(listingId);
+}
+
+function markMarketListingPurchased(type, listingId) {
+  const day = localDateKey(new Date());
+  const purchases = getMarketPurchasesForToday();
+  if (!purchases[type].includes(listingId)) purchases[type].push(listingId);
+  state.marketPurchases = { date: day, shop: purchases.shop, auction: purchases.auction };
+  saveMarketPurchases();
+}
+
+function getMarketPurchasesForToday() {
+  const day = localDateKey(new Date());
+  if (state.marketPurchases?.date !== day) {
+    return { date: day, shop: [], auction: [] };
+  }
+  return normalizeMarketPurchases(state.marketPurchases);
+}
+
+function seededShuffle(items, seedText) {
+  const result = [...items];
+  let seed = hashString(seedText);
+  for (let i = result.length - 1; i > 0; i -= 1) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    const j = seed % (i + 1);
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+function seededRandom(seedText) {
+  let seed = hashString(seedText);
+  seed = (seed * 1664525 + 1013904223) >>> 0;
+  return seed / 4294967296;
+}
+
+function hashString(text) {
+  let hash = 2166136261;
+  for (const char of String(text)) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function createQuestStage(area, stage) {
+  const number = questStageToNumber(area, stage);
+  return {
+    id: `${area}-${stage}`,
+    area,
+    stage,
+    number,
+    enemyName: `${getQuestAreaName(area)} ${stage}`,
+    enemyHp: MAX_HP + Math.floor(number * 12),
+    enemyLevel: Math.floor(number * 1.4),
+    rewardGold: 60 + area * 25 + stage * 12 + Math.floor(number / 5) * 10
+  };
+}
+
+function getQuestStage(stageId) {
+  const match = /^(\d+)-(\d+)$/.exec(stageId || "");
+  if (!match) return null;
+  const area = clampInteger(match[1], 1, QUEST_AREA_COUNT);
+  const stage = clampInteger(match[2], 1, QUEST_STAGES_PER_AREA);
+  const normalized = `${area}-${stage}`;
+  if (normalized !== stageId) return null;
+  return createQuestStage(area, stage);
+}
+
+function getQuestAreaName(area) {
+  const names = ["芽吹きの道", "月影の森", "星読の塔", "天海の橋", "記憶の庭"];
+  return names[area - 1] || `エリア${area}`;
+}
+
+function questStageToNumber(area, stage) {
+  return (area - 1) * QUEST_STAGES_PER_AREA + stage;
+}
+
+function numberToQuestStage(number) {
+  const max = QUEST_AREA_COUNT * QUEST_STAGES_PER_AREA;
+  const safeNumber = Math.max(1, Math.min(max, number));
+  const area = Math.floor((safeNumber - 1) / QUEST_STAGES_PER_AREA) + 1;
+  const stage = ((safeNumber - 1) % QUEST_STAGES_PER_AREA) + 1;
+  return createQuestStage(area, stage);
+}
+
+function formatQuestStageId(stage) {
+  return stage?.id || "1-1";
+}
+
+function isQuestStageCleared(stageId) {
+  return state.questClears.includes(stageId);
+}
+
+function isQuestStageUnlocked(stage) {
+  return stage.number <= getHighestUnlockedQuestNumber();
+}
+
+function getHighestUnlockedQuestNumber() {
+  const highestClear = state.questClears.reduce((max, stageId) => {
+    const stage = getQuestStage(stageId);
+    return stage ? Math.max(max, stage.number) : max;
+  }, 0);
+  return Math.min(QUEST_AREA_COUNT * QUEST_STAGES_PER_AREA, highestClear + 1);
 }
 
 function getActiveGachaSet() {
@@ -2685,10 +3554,11 @@ function characterEffectCostBonus(characterEffect) {
   if (!characterEffect) return 0;
   const value = Math.max(1, clampInteger(characterEffect.value, 1, 999));
   if (characterEffect.effect === "draw") return value * 6;
-  if (characterEffect.effect === "heal") return Math.ceil(value / 2);
+  if (characterEffect.effect === "heal") return Math.ceil(value / 12);
   if (characterEffect.effect === "maxCost") return value * 8;
   if (characterEffect.effect === "level") return value * 5;
   if (characterEffect.effect === "damage") return value * 2;
+  if (characterEffect.effect === "graveHand") return value * 8;
   return 0;
 }
 
@@ -2700,6 +3570,7 @@ function characterEffectText(characterEffect) {
   if (characterEffect.effect === "maxCost") return `${prefix}: 最大コストを${characterEffect.value}増やす`;
   if (characterEffect.effect === "level") return `${prefix}: レベルを${characterEffect.value}上げる`;
   if (characterEffect.effect === "damage") return `${prefix}: 相手プレイヤーに${characterEffect.value}追加ダメージ`;
+  if (characterEffect.effect === "graveHand") return `${prefix}: 手札から${characterEffect.value}枚まで墓地へ送る`;
   return "効果なし";
 }
 
@@ -2711,6 +3582,7 @@ function characterEffectShortText(characterEffect) {
   if (characterEffect.effect === "maxCost") return `${prefix}: コスト+${characterEffect.value}`;
   if (characterEffect.effect === "level") return `${prefix}: LV+${characterEffect.value}`;
   if (characterEffect.effect === "damage") return `${prefix}: ${characterEffect.value}追加`;
+  if (characterEffect.effect === "graveHand") return `${prefix}: 手札${characterEffect.value}墓地`;
   return "";
 }
 
@@ -2777,7 +3649,8 @@ function calculateSpellCost(effect, value) {
   const amount = Math.max(1, clampInteger(value, 1, 999));
   if (effect === "draw") return Math.max(1, Math.ceil(amount * 1.4));
   if (effect === "maxCost") return Math.max(3, amount * 3);
-  if (effect === "heal") return Math.max(1, Math.ceil(amount / 4));
+  if (effect === "heal") return Math.max(1, Math.ceil(amount / 15));
+  if (effect === "graveHand") return Math.max(2, amount * 2);
   return 1;
 }
 
@@ -2798,6 +3671,7 @@ function spellText(spell) {
   if (spell.effect === "draw") return `山札から${effectiveDrawValue(spell.value)}枚ドロー`;
   if (spell.effect === "maxCost") return `最大コストを恒久的に${spell.value}増やす`;
   if (spell.effect === "heal") return `HPを${spell.value}回復`;
+  if (spell.effect === "graveHand") return `手札から${spell.value}枚まで選んで墓地へ送る`;
   return "効果なし";
 }
 
@@ -3201,6 +4075,9 @@ function collectCloudSaveData() {
     inventory: state.inventory,
     creatorTickets: state.creatorTickets,
     gachaBalls: state.gachaBalls,
+    gold: state.gold,
+    questClears: state.questClears,
+    marketPurchases: state.marketPurchases,
     lastDailyReward: state.lastDailyReward,
     gachaHistory: state.gachaHistory.slice(0, GACHA_HISTORY_LIMIT),
     deckIds: state.deckIds,
@@ -3222,6 +4099,9 @@ function sanitizeCloudSaveData(data) {
       : {},
     creatorTickets: Math.max(0, clampInteger(data.creatorTickets, 0, 9999)),
     gachaBalls: Math.max(0, clampInteger(data.gachaBalls, 0, 9999)),
+    gold: Math.max(0, clampInteger(data.gold, 0, 9999999)),
+    questClears: normalizeQuestClears(data.questClears),
+    marketPurchases: normalizeMarketPurchases(data.marketPurchases),
     lastDailyReward: typeof data.lastDailyReward === "string" ? data.lastDailyReward : "",
     gachaHistory: Array.isArray(data.gachaHistory) ? data.gachaHistory.slice(0, GACHA_HISTORY_LIMIT) : [],
     deckIds: Array.isArray(data.deckIds) ? data.deckIds : [],
@@ -3236,6 +4116,9 @@ function applyCloudSaveData(data) {
   state.inventory = data.inventory;
   state.creatorTickets = data.creatorTickets;
   state.gachaBalls = data.gachaBalls;
+  state.gold = data.gold;
+  state.questClears = data.questClears;
+  state.marketPurchases = data.marketPurchases;
   state.lastDailyReward = data.lastDailyReward;
   state.gachaHistory = data.gachaHistory;
   state.gachaResults = [];
@@ -3255,6 +4138,9 @@ function persistLocalSaveData() {
   localStorage.setItem(STORAGE_KEYS.inventory, JSON.stringify(state.inventory));
   localStorage.setItem(STORAGE_KEYS.creatorTickets, String(state.creatorTickets));
   localStorage.setItem(STORAGE_KEYS.gachaBalls, String(state.gachaBalls));
+  localStorage.setItem(STORAGE_KEYS.gold, String(state.gold));
+  localStorage.setItem(STORAGE_KEYS.questClears, JSON.stringify(normalizeQuestClears(state.questClears)));
+  localStorage.setItem(STORAGE_KEYS.marketPurchases, JSON.stringify(normalizeMarketPurchases(state.marketPurchases)));
   localStorage.setItem(STORAGE_KEYS.lastDailyReward, state.lastDailyReward);
   localStorage.setItem(STORAGE_KEYS.gachaHistory, JSON.stringify(state.gachaHistory.slice(0, GACHA_HISTORY_LIMIT)));
   localStorage.setItem(STORAGE_KEYS.deck, JSON.stringify(state.deckIds));
@@ -3368,6 +4254,63 @@ function readGachaBalls() {
 function saveGachaBalls() {
   localStorage.setItem(STORAGE_KEYS.gachaBalls, String(state.gachaBalls));
   queueCloudSave();
+}
+
+function readGold() {
+  const value = Number.parseInt(localStorage.getItem(STORAGE_KEYS.gold) || "0", 10);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function saveGold() {
+  localStorage.setItem(STORAGE_KEYS.gold, String(state.gold));
+  queueCloudSave();
+}
+
+function readQuestClears() {
+  try {
+    return normalizeQuestClears(JSON.parse(localStorage.getItem(STORAGE_KEYS.questClears) || "[]"));
+  } catch {
+    return [];
+  }
+}
+
+function saveQuestClears() {
+  state.questClears = normalizeQuestClears(state.questClears);
+  localStorage.setItem(STORAGE_KEYS.questClears, JSON.stringify(state.questClears));
+  queueCloudSave();
+}
+
+function readMarketPurchases() {
+  try {
+    return normalizeMarketPurchases(JSON.parse(localStorage.getItem(STORAGE_KEYS.marketPurchases) || "{}"));
+  } catch {
+    return { date: "", shop: [], auction: [] };
+  }
+}
+
+function saveMarketPurchases() {
+  state.marketPurchases = normalizeMarketPurchases(state.marketPurchases);
+  localStorage.setItem(STORAGE_KEYS.marketPurchases, JSON.stringify(state.marketPurchases));
+  queueCloudSave();
+}
+
+function normalizeMarketPurchases(value) {
+  if (!value || typeof value !== "object") return { date: "", shop: [], auction: [] };
+  return {
+    date: typeof value.date === "string" ? value.date : "",
+    shop: Array.isArray(value.shop) ? [...new Set(value.shop.filter((id) => typeof id === "string"))] : [],
+    auction: Array.isArray(value.auction) ? [...new Set(value.auction.filter((id) => typeof id === "string"))] : []
+  };
+}
+
+function normalizeQuestClears(clears) {
+  if (!Array.isArray(clears)) return [];
+  const valid = new Set();
+  clears.forEach((stageId) => {
+    const stage = getQuestStage(stageId);
+    if (stage) valid.add(stage.id);
+  });
+  return [...valid].sort((a, b) => getQuestStage(a).number - getQuestStage(b).number);
 }
 
 function readLastDailyReward() {
@@ -3490,6 +4433,7 @@ function normalizeSavedAiBattle(battle) {
 
   const players = battle.players.map((player, index) => normalizeSavedBattlePlayer(player, index === 0 ? "あなた" : "AI"));
   if (players.some((player) => !player)) return null;
+  const initialDeckSize = normalizeBattleInitialDeckSize(battle.initialDeckSize, players);
 
   const normalized = {
     ...battle,
@@ -3501,6 +4445,7 @@ function normalizeSavedAiBattle(battle) {
     turnNumber: Math.max(0, clampInteger(battle.turnNumber, 0, 9999)),
     winner: null,
     rewardGranted: false,
+    initialDeckSize,
     players,
     log: Array.isArray(battle.log) ? battle.log.filter((line) => typeof line === "string").slice(-80) : []
   };
@@ -3516,6 +4461,12 @@ function normalizeSavedAiBattle(battle) {
   }
   normalized.aiThinking = normalized.phase === "battle" && normalized.activePlayer === normalized.aiPlayer;
   return normalized;
+}
+
+function normalizeBattleInitialDeckSize(value, players) {
+  const size = Number.parseInt(value, 10);
+  if (Number.isFinite(size) && size > 0) return Math.min(DECK_SIZE, size);
+  return Math.max(...players.map(countBattleCards));
 }
 
 function normalizeSavedBattlePlayer(player, fallbackName) {
@@ -3536,18 +4487,22 @@ function normalizeSavedBattlePlayer(player, fallbackName) {
         canAttack: Boolean(unit.canAttack)
       }))
     : [];
+  const grave = normalizeCardIds(player.grave);
+  const storedLevel = Math.max(0, clampInteger(player.level, 0, 9999));
+  const minimumLevelFromGrave = grave.reduce((total, cardId) => total + (getCard(cardId)?.cost || 0), 0);
 
   return {
     name: typeof player.name === "string" && player.name.trim() ? player.name : fallbackName,
     hp: clampInteger(player.hp, -9999, MAX_HP),
-    level: Math.max(0, clampInteger(player.level, 0, 9999)),
+    maxHp: Math.max(MAX_HP, clampInteger(player.maxHp, MAX_HP, 9999)),
+    level: Math.max(storedLevel, minimumLevelFromGrave),
     maxCost: Math.max(0, clampInteger(player.maxCost, 0, 9999)),
     currentCost: Math.max(0, clampInteger(player.currentCost, 0, 9999)),
     ownTurns: Math.max(0, clampInteger(player.ownTurns, 0, 9999)),
     deck: normalizeCardIds(player.deck),
     hand: normalizeHand(player.hand),
     field: normalizeField(player.field),
-    grave: normalizeCardIds(player.grave)
+    grave
   };
 }
 

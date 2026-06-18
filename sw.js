@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "level-link-card-battle-v26";
+const CACHE_NAME = "level-link-card-battle-v32";
 const ASSETS = [
   "./",
   "./index.html",
