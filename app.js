@@ -2243,8 +2243,9 @@ function renderCardIllustration(card, compact = false) {
     const row = Math.floor(art.spriteIndex / 6);
     const spriteX = `${col * 20}%`;
     const spriteY = `${row * 50}%`;
+    const spriteSheet = art.spriteSheet ? ` --sprite-sheet: url(${escapeAttr(art.spriteSheet)});` : "";
     return `
-      <div class="card-illustration photo-art ${card.type} rarity-${rarity}${compactClass}" style="--sprite-x: ${spriteX}; --sprite-y: ${spriteY};">
+      <div class="card-illustration photo-art ${card.type} rarity-${rarity}${compactClass}" style="--sprite-x: ${spriteX}; --sprite-y: ${spriteY};${spriteSheet}">
         <span class="art-type">${typeMark}</span>
       </div>
     `;
@@ -3842,6 +3843,7 @@ function getCardArtProfile(card) {
     spell: { a: "#dff6ff", b: "#a58cff", c: "#ffffff" }
   };
   const attributeTheme = themes[normalizeCardAttribute(card.attribute)] || themes.neutral;
+  const set2Sheet = "./assets/card-photo-sheet-set2.png";
 
   const profiles = {
     "char-sprout-fairy": { ...themes.guard, kind: "fairy", features: ["wings", "sprout"], spriteIndex: 0 },
@@ -3861,7 +3863,22 @@ function getCardArtProfile(card) {
     "char-starlight-queen": { ...themes.moon, kind: "queen", features: ["crown", "staff"], spriteIndex: 14 },
     "char-celestial-whale": { ...themes.water, kind: "whale", spriteIndex: 15 },
     "spell-grand-library": { ...themes.gold, kind: "library", spriteIndex: 16 },
-    "spell-celestial-spring": { ...themes.water, kind: "fountain", spriteIndex: 17 }
+    "spell-celestial-spring": { ...themes.water, kind: "fountain", spriteIndex: 17 },
+    "char-mist-apprentice": { ...themes.wind, kind: "mage", features: ["staff"], spriteIndex: 0, spriteSheet: set2Sheet },
+    "char-bell-recycler": { ...themes.light, kind: "mage", features: ["staff"], spriteIndex: 1, spriteSheet: set2Sheet },
+    "char-azure-cleric": { ...themes.water, kind: "cleric", features: ["wings"], spriteIndex: 2, spriteSheet: set2Sheet },
+    "char-twilight-alchemist": { ...themes.memory, kind: "alchemist", features: ["staff"], spriteIndex: 3, spriteSheet: set2Sheet },
+    "char-comet-duelist": { ...themes.sky, kind: "duelist", features: ["sword"], spriteIndex: 4, spriteSheet: set2Sheet },
+    "char-honeydew-absorber": { ...themes.water, kind: "absorber", features: ["sword"], spriteIndex: 5, spriteSheet: set2Sheet },
+    "char-crimson-rose-vampire": { ...themes.moon, kind: "vampire", features: ["crown"], spriteIndex: 6, spriteSheet: set2Sheet },
+    "char-lotus-oracle": { ...themes.light, kind: "oracle", features: ["staff"], spriteIndex: 7, spriteSheet: set2Sheet },
+    "char-sky-archive-dragon": { ...themes.sky, kind: "dragon", spriteIndex: 8, spriteSheet: set2Sheet },
+    "spell-parting-bloom": { ...themes.sakura, kind: "ritual", spriteIndex: 9, spriteSheet: set2Sheet },
+    "spell-memory-river": { ...themes.memory, kind: "ritual", spriteIndex: 10, spriteSheet: set2Sheet },
+    "spell-moonlit-release": { ...themes.moon, kind: "ritual", spriteIndex: 11, spriteSheet: set2Sheet },
+    "spell-sunrise-hymn": { ...themes.light, kind: "ritual", spriteIndex: 12, spriteSheet: set2Sheet },
+    "spell-angel-rest": { ...themes.sky, kind: "ritual", spriteIndex: 13, spriteSheet: set2Sheet },
+    "spell-sage-contract": { ...themes.memory, kind: "book", spriteIndex: 14, spriteSheet: set2Sheet }
   };
 
   if (profiles[card.id]) return profiles[card.id];

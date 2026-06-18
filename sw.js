@@ -1,6 +1,6 @@
 "use strict";
 
-const CACHE_NAME = "level-link-card-battle-v34";
+const CACHE_NAME = "level-link-card-battle-v36";
 const ASSETS = [
   "./",
   "./index.html",
@@ -9,7 +9,8 @@ const ASSETS = [
   "./firebase-config.js",
   "./manifest.webmanifest",
   "./icon.svg",
-  "./assets/card-photo-sheet.png"
+  "./assets/card-photo-sheet.png",
+  "./assets/card-photo-sheet-set2.png"
 ];
 
 self.addEventListener("install", (event) => {
