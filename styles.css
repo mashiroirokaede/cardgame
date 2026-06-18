@@ -435,6 +435,13 @@ label {
   box-shadow: 0 10px 22px rgba(210, 151, 32, 0.2);
 }
 
+.game-card.rarity-UR {
+  border-color: #ff8fcf;
+  box-shadow:
+    0 0 0 1px rgba(255, 211, 106, 0.54),
+    0 12px 28px rgba(255, 112, 176, 0.24);
+}
+
 .game-card.is-cost-locked {
   color: #6f7782;
   border-color: #cbd3dc;
@@ -1494,6 +1501,11 @@ label {
   border-color: #f3b43f;
 }
 
+.rarity-pill.rarity-UR {
+  background: linear-gradient(135deg, #ff72bb, #f3b43f);
+  border-color: #ff8fcf;
+}
+
 .battle-layout {
   display: grid;
   gap: 12px;
@@ -2181,6 +2193,13 @@ label {
 .fx-overlay.rarity-SSR .fx-burst {
   border-color: rgba(255, 211, 106, 0.9);
   box-shadow: 0 18px 48px rgba(210, 151, 32, 0.3);
+}
+
+.fx-overlay.rarity-UR .fx-burst {
+  border-color: rgba(255, 143, 207, 0.96);
+  box-shadow:
+    0 0 0 1px rgba(255, 211, 106, 0.54),
+    0 20px 58px rgba(255, 112, 176, 0.34);
 }
 
 .gacha-result-card {

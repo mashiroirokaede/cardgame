@@ -50,19 +50,32 @@ const HAND_SORT_OPTIONS = [
   { id: "costDesc", label: "コスト高い順" }
 ];
 
-const RARITY_ORDER = ["N", "R", "SR", "SSR"];
+const RARITY_ORDER = ["N", "R", "SR", "SSR", "UR"];
 const RARITY_LABELS = {
   N: "N",
   R: "R",
   SR: "SR",
-  SSR: "SSR"
+  SSR: "SSR",
+  UR: "UR"
 };
 
+const CARD_ATTRIBUTES = [
+  { id: "sakura", label: "桜" },
+  { id: "moon", label: "月" },
+  { id: "water", label: "水" },
+  { id: "wind", label: "風" },
+  { id: "light", label: "光" },
+  { id: "sky", label: "空" },
+  { id: "memory", label: "記憶" },
+  { id: "neutral", label: "無" }
+];
+
 const RARITY_RATES = [
-  { rarity: "N", weight: 62 },
+  { rarity: "N", weight: 61 },
   { rarity: "R", weight: 25 },
   { rarity: "SR", weight: 10 },
-  { rarity: "SSR", weight: 3 }
+  { rarity: "SSR", weight: 3 },
+  { rarity: "UR", weight: 1 }
 ];
 
 const CREATOR_TIERS = [
@@ -105,6 +118,16 @@ const CREATOR_TIERS = [
     maxDef: 48,
     spellMax: { draw: 7, maxCost: 4, heal: 150, graveHand: 4 },
     description: "切り札級のカード向け"
+  },
+  {
+    id: "ur",
+    label: "UR作成",
+    tickets: 18,
+    minRarity: "UR",
+    maxAtk: 50,
+    maxDef: 70,
+    spellMax: { draw: 10, maxCost: 6, heal: 240, graveHand: 6 },
+    description: "最高レアの超切り札カード向け"
   }
 ];
 
@@ -114,7 +137,7 @@ const CHARACTER_EFFECT_OPTIONS = [
     label: "効果なし",
     trigger: "none",
     effect: "none",
-    maxByTier: { n: 0, r: 0, sr: 0, ssr: 0 },
+    maxByTier: { n: 0, r: 0, sr: 0, ssr: 0, ur: 0 },
     description: "効果を持たないかわりにコストを抑えられます。"
   },
   {
@@ -122,7 +145,7 @@ const CHARACTER_EFFECT_OPTIONS = [
     label: "召喚時ドロー",
     trigger: "summon",
     effect: "draw",
-    maxByTier: { n: 1, r: 1, sr: 2, ssr: 3 },
+    maxByTier: { n: 1, r: 1, sr: 2, ssr: 3, ur: 4 },
     description: "召喚した時、山札からカードを引きます。"
   },
   {
@@ -130,7 +153,7 @@ const CHARACTER_EFFECT_OPTIONS = [
     label: "召喚時HP回復",
     trigger: "summon",
     effect: "heal",
-    maxByTier: { n: 15, r: 30, sr: 55, ssr: 90 },
+    maxByTier: { n: 15, r: 30, sr: 55, ssr: 90, ur: 140 },
     description: "召喚した時、自分のHPを回復します。"
   },
   {
@@ -138,7 +161,7 @@ const CHARACTER_EFFECT_OPTIONS = [
     label: "召喚時最大コスト増加",
     trigger: "summon",
     effect: "maxCost",
-    maxByTier: { n: 1, r: 1, sr: 2, ssr: 3 },
+    maxByTier: { n: 1, r: 1, sr: 2, ssr: 3, ur: 4 },
     description: "召喚した時、最大コストを増やします。"
   },
   {
@@ -146,7 +169,7 @@ const CHARACTER_EFFECT_OPTIONS = [
     label: "攻撃時レベル上昇",
     trigger: "attack",
     effect: "level",
-    maxByTier: { n: 1, r: 2, sr: 3, ssr: 5 },
+    maxByTier: { n: 1, r: 2, sr: 3, ssr: 5, ur: 8 },
     description: "攻撃した時、自分のレベルを上げます。"
   },
   {
@@ -154,7 +177,7 @@ const CHARACTER_EFFECT_OPTIONS = [
     label: "攻撃時追加ダメージ",
     trigger: "attack",
     effect: "damage",
-    maxByTier: { n: 3, r: 7, sr: 12, ssr: 20 },
+    maxByTier: { n: 3, r: 7, sr: 12, ssr: 20, ur: 32 },
     description: "攻撃した時、相手プレイヤーに追加ダメージを与えます。"
   },
   {
@@ -162,7 +185,7 @@ const CHARACTER_EFFECT_OPTIONS = [
     label: "召喚時手札を墓地へ",
     trigger: "summon",
     effect: "graveHand",
-    maxByTier: { n: 1, r: 1, sr: 2, ssr: 3 },
+    maxByTier: { n: 1, r: 1, sr: 2, ssr: 3, ur: 5 },
     description: "召喚した時、手札を選んで墓地へ送り、そのコスト分レベルを上げます。"
   },
   {
@@ -170,8 +193,16 @@ const CHARACTER_EFFECT_OPTIONS = [
     label: "攻撃時手札を墓地へ",
     trigger: "attack",
     effect: "graveHand",
-    maxByTier: { n: 1, r: 1, sr: 2, ssr: 3 },
+    maxByTier: { n: 1, r: 1, sr: 2, ssr: 3, ur: 5 },
     description: "攻撃した時、手札を選んで墓地へ送り、そのコスト分レベルを上げます。"
+  },
+  {
+    id: "attackAbsorb",
+    label: "攻撃時吸収",
+    trigger: "attack",
+    effect: "absorb",
+    maxByTier: { n: 1, r: 1, sr: 1, ssr: 1, ur: 1 },
+    description: "攻撃した時、自分の攻撃力分だけ防御を回復します。防御は元の最大値を超えません。"
   }
 ];
 
@@ -182,6 +213,7 @@ const DEFAULT_CARDS = [
     type: "character",
     name: "芽吹きの精",
     icon: "芽",
+    attribute: "wind",
     rarity: "N",
     cost: 1,
     atk: 2,
@@ -194,6 +226,7 @@ const DEFAULT_CARDS = [
     type: "character",
     name: "桜の剣士",
     icon: "桜",
+    attribute: "sakura",
     rarity: "R",
     cost: 4,
     atk: 8,
@@ -206,6 +239,7 @@ const DEFAULT_CARDS = [
     type: "character",
     name: "月影の狐",
     icon: "月",
+    attribute: "moon",
     rarity: "R",
     cost: 4,
     atk: 10,
@@ -218,6 +252,7 @@ const DEFAULT_CARDS = [
     type: "character",
     name: "花守の騎士",
     icon: "花",
+    attribute: "sakura",
     rarity: "R",
     cost: 4,
     atk: 6,
@@ -230,6 +265,7 @@ const DEFAULT_CARDS = [
     type: "character",
     name: "桜天龍",
     icon: "龍",
+    attribute: "sakura",
     rarity: "SSR",
     cost: 8,
     atk: 18,
@@ -242,6 +278,7 @@ const DEFAULT_CARDS = [
     type: "character",
     name: "聖壁の守護者",
     icon: "盾",
+    attribute: "light",
     rarity: "R",
     cost: 4,
     atk: 5,
@@ -254,6 +291,7 @@ const DEFAULT_CARDS = [
     type: "character",
     name: "風鈴の射手",
     icon: "風",
+    attribute: "wind",
     rarity: "N",
     cost: 3,
     atk: 7,
@@ -266,6 +304,7 @@ const DEFAULT_CARDS = [
     type: "character",
     name: "雫の魔導士",
     icon: "雫",
+    attribute: "water",
     rarity: "SR",
     cost: 5,
     atk: 9,
@@ -278,6 +317,7 @@ const DEFAULT_CARDS = [
     type: "spell",
     name: "知識の書",
     icon: "書",
+    attribute: "memory",
     rarity: "N",
     cost: 2,
     spell: { effect: "draw", value: 2 }
@@ -288,6 +328,7 @@ const DEFAULT_CARDS = [
     type: "spell",
     name: "星読みの儀式",
     icon: "星",
+    attribute: "moon",
     rarity: "SR",
     cost: 4,
     spell: { effect: "draw", value: 3 }
@@ -298,6 +339,7 @@ const DEFAULT_CARDS = [
     type: "spell",
     name: "魔力の泉",
     icon: "泉",
+    attribute: "water",
     rarity: "R",
     cost: 3,
     spell: { effect: "maxCost", value: 1 }
@@ -308,6 +350,7 @@ const DEFAULT_CARDS = [
     type: "spell",
     name: "生命の祈り",
     icon: "祈",
+    attribute: "light",
     rarity: "N",
     cost: 3,
     spell: { effect: "heal", value: 40 }
@@ -318,6 +361,7 @@ const DEFAULT_CARDS = [
     type: "character",
     name: "水晶の槍姫",
     icon: "晶",
+    attribute: "water",
     rarity: "SR",
     cost: 6,
     atk: 15,
@@ -330,6 +374,7 @@ const DEFAULT_CARDS = [
     type: "character",
     name: "虹翼の守護者",
     icon: "虹",
+    attribute: "light",
     rarity: "SR",
     cost: 6,
     atk: 10,
@@ -342,6 +387,7 @@ const DEFAULT_CARDS = [
     type: "character",
     name: "星灯の女王",
     icon: "灯",
+    attribute: "sky",
     rarity: "SSR",
     cost: 9,
     atk: 24,
@@ -354,7 +400,8 @@ const DEFAULT_CARDS = [
     type: "character",
     name: "天海の大鯨",
     icon: "海",
-    rarity: "SSR",
+    attribute: "water",
+    rarity: "UR",
     cost: 10,
     atk: 18,
     def: 32,
@@ -366,6 +413,7 @@ const DEFAULT_CARDS = [
     type: "spell",
     name: "大図書館の扉",
     icon: "扉",
+    attribute: "memory",
     rarity: "SSR",
     cost: 6,
     spell: { effect: "draw", value: 5 }
@@ -376,6 +424,7 @@ const DEFAULT_CARDS = [
     type: "spell",
     name: "天恵の泉",
     icon: "恵",
+    attribute: "water",
     rarity: "SR",
     cost: 6,
     spell: { effect: "maxCost", value: 2 }
@@ -389,6 +438,7 @@ const SET_2_CARDS = [
     type: "character",
     name: "霞の見習い",
     icon: "霞",
+    attribute: "wind",
     rarity: "N",
     cost: 2,
     atk: 3,
@@ -402,6 +452,7 @@ const SET_2_CARDS = [
     type: "character",
     name: "鈴音の回収士",
     icon: "鈴",
+    attribute: "light",
     rarity: "R",
     cost: 4,
     atk: 7,
@@ -415,6 +466,7 @@ const SET_2_CARDS = [
     type: "character",
     name: "蒼羽の癒し手",
     icon: "癒",
+    attribute: "light",
     rarity: "R",
     cost: 4,
     atk: 5,
@@ -428,6 +480,7 @@ const SET_2_CARDS = [
     type: "character",
     name: "薄明の錬金士",
     icon: "錬",
+    attribute: "memory",
     rarity: "SR",
     cost: 6,
     atk: 10,
@@ -441,6 +494,7 @@ const SET_2_CARDS = [
     type: "character",
     name: "彗星の決闘者",
     icon: "彗",
+    attribute: "sky",
     rarity: "SR",
     cost: 6,
     atk: 16,
@@ -449,11 +503,40 @@ const SET_2_CARDS = [
     characterEffect: { trigger: "attack", effect: "damage", value: 12 }
   },
   {
+    id: "char-honeydew-absorber",
+    source: "set-2",
+    type: "character",
+    name: "甘露の吸収士",
+    icon: "吸",
+    attribute: "water",
+    rarity: "SR",
+    cost: 7,
+    atk: 13,
+    def: 18,
+    abilities: [],
+    characterEffect: { trigger: "attack", effect: "absorb", value: 1 }
+  },
+  {
+    id: "char-crimson-rose-vampire",
+    source: "set-2",
+    type: "character",
+    name: "紅薔薇の吸血姫",
+    icon: "薔",
+    attribute: "moon",
+    rarity: "UR",
+    cost: 10,
+    atk: 22,
+    def: 24,
+    abilities: [],
+    characterEffect: { trigger: "attack", effect: "absorb", value: 1 }
+  },
+  {
     id: "char-lotus-oracle",
     source: "set-2",
     type: "character",
     name: "蓮華の神託者",
     icon: "蓮",
+    attribute: "light",
     rarity: "SSR",
     cost: 8,
     atk: 16,
@@ -467,6 +550,7 @@ const SET_2_CARDS = [
     type: "character",
     name: "天文庫の龍",
     icon: "庫",
+    attribute: "sky",
     rarity: "SSR",
     cost: 10,
     atk: 24,
@@ -480,6 +564,7 @@ const SET_2_CARDS = [
     type: "spell",
     name: "別れ花の儀",
     icon: "別",
+    attribute: "sakura",
     rarity: "N",
     cost: 2,
     spell: { effect: "graveHand", value: 1 }
@@ -490,6 +575,7 @@ const SET_2_CARDS = [
     type: "spell",
     name: "記憶の小川",
     icon: "記",
+    attribute: "memory",
     rarity: "R",
     cost: 4,
     spell: { effect: "graveHand", value: 2 }
@@ -500,6 +586,7 @@ const SET_2_CARDS = [
     type: "spell",
     name: "月明かりの解放",
     icon: "解",
+    attribute: "moon",
     rarity: "SR",
     cost: 6,
     spell: { effect: "graveHand", value: 3 }
@@ -510,6 +597,7 @@ const SET_2_CARDS = [
     type: "spell",
     name: "朝焼けの賛歌",
     icon: "朝",
+    attribute: "light",
     rarity: "R",
     cost: 4,
     spell: { effect: "heal", value: 70 }
@@ -520,6 +608,7 @@ const SET_2_CARDS = [
     type: "spell",
     name: "天使の休息",
     icon: "休",
+    attribute: "light",
     rarity: "SSR",
     cost: 7,
     spell: { effect: "heal", value: 130 }
@@ -530,6 +619,7 @@ const SET_2_CARDS = [
     type: "spell",
     name: "賢者の契約",
     icon: "契",
+    attribute: "memory",
     rarity: "SR",
     cost: 5,
     spell: { effect: "draw", value: 4 }
@@ -548,7 +638,7 @@ const GACHA_SETS = [
     id: "set-2",
     label: "第2弾",
     name: "記憶解放ガチャ",
-    description: "手札を墓地へ送り、レベルを伸ばすカードを中心にした第2弾パックです。",
+    description: "手札を墓地へ送り、レベルを伸ばすカードと吸収キャラを中心にした第2弾パックです。",
     cardIds: SET_2_CARDS.map((card) => card.id)
   }
 ];
@@ -593,6 +683,7 @@ const state = {
     tierId: "n",
     name: "",
     icon: "桜",
+    attribute: "sakura",
     atk: 8,
     def: 8,
     block: false,
@@ -891,6 +982,9 @@ function handleInput(event) {
 
   if (field === "type") {
     state.creatorDraft.icon = state.creatorDraft.type === "character" ? "桜" : "書";
+  }
+  if (field === "attribute") {
+    state.creatorDraft.attribute = normalizeCardAttribute(state.creatorDraft.attribute);
   }
 
   clampCreatorDraftToTier();
@@ -1377,7 +1471,7 @@ function renderGacha() {
           <button class="accent" data-action="gacha" data-count="10" ${canTen ? "" : "disabled"}>${escapeHtml(activeSet.label)}を10パック開封 (${GACHA_TEN_COST}個 / ${GACHA_TEN_COST * GACHA_CARDS_PER_BALL}枚)</button>
         </div>
         <div class="notice" style="margin-top: 12px;">
-          ${GACHA_BALL_NAME}はAI戦報酬と1日1回ボーナスで入手できます。1個で${GACHA_CARDS_PER_BALL}枚、10個で${GACHA_TEN_COST * GACHA_CARDS_PER_BALL}枚入手できます。AI戦勝利で${AI_WIN_GACHA_BALL_REWARD}個、敗北でも${AI_LOSE_GACHA_BALL_REWARD}個。${escapeHtml(activeSet.label)}のカード枠提供割合: N 62%、R 25%、SR 10%、SSR 3%。各排出枠${CREATOR_TICKET_CHANCE}%の確率でカード枠の代わりに${CREATOR_TICKET_NAME}が出ます。
+          ${GACHA_BALL_NAME}はAI戦報酬と1日1回ボーナスで入手できます。1個で${GACHA_CARDS_PER_BALL}枚、10個で${GACHA_TEN_COST * GACHA_CARDS_PER_BALL}枚入手できます。AI戦勝利で${AI_WIN_GACHA_BALL_REWARD}個、敗北でも${AI_LOSE_GACHA_BALL_REWARD}個。${escapeHtml(activeSet.label)}のカード枠提供割合: ${escapeHtml(formatRarityRates())}。各排出枠${CREATOR_TICKET_CHANCE}%の確率でカード枠の代わりに${CREATOR_TICKET_NAME}が出ます。
         </div>
       </div>
       ${results.length ? `
@@ -1565,6 +1659,14 @@ function renderCardCreator() {
             アイコン
             <input data-field="icon" maxlength="2" value="${escapeAttr(draft.icon)}" placeholder="桜">
           </label>
+          <label>
+            属性
+            <select data-field="attribute">
+              ${CARD_ATTRIBUTES.map((entry) => `
+                <option value="${entry.id}" ${normalizeCardAttribute(draft.attribute) === entry.id ? "selected" : ""}>${entry.label}</option>
+              `).join("")}
+            </select>
+          </label>
           ${draft.type === "character" ? renderCharacterCreatorFields(draft, tier) : renderSpellCreatorFields(draft, tier)}
         </div>
         <div class="cost-preview">
@@ -1618,7 +1720,9 @@ function renderCharacterCreatorFields(draft, tier) {
         `).join("")}
       </select>
     </label>
-    ${effectOption.id === "none" ? `<div class="notice">効果なしの場合、コストを抑えたカードを作れます。</div>` : `
+    ${effectOption.id === "none" ? `<div class="notice">効果なしの場合、コストを抑えたカードを作れます。</div>` : effectOption.effect === "absorb" ? `
+      <div class="notice full">${escapeHtml(effectOption.description)} 効果量は攻撃力で決まります。</div>
+    ` : `
       <label>
         効果量
         <input data-field="characterEffectValue" type="number" min="1" max="${effectMax}" value="${Math.max(1, draft.characterEffectValue)}">
@@ -2106,13 +2210,23 @@ function shortSpellLabel(spell) {
   return "効果";
 }
 
+function normalizeCardAttribute(attribute) {
+  return CARD_ATTRIBUTES.some((entry) => entry.id === attribute) ? attribute : "neutral";
+}
+
+function cardAttributeLabel(attribute) {
+  const normalized = normalizeCardAttribute(attribute);
+  return CARD_ATTRIBUTES.find((entry) => entry.id === normalized)?.label || "無";
+}
+
 function renderMiniCardHeader(card) {
+  const attribute = cardAttributeLabel(card.attribute);
   return `
     <div class="card-head">
       <div class="card-art">${escapeHtml(card.icon || "札")}</div>
       <div class="card-name">
         <strong>${escapeHtml(card.name)}</strong>
-        <small>${card.type === "character" ? "キャラクター" : "呪文"} / ${escapeHtml(card.rarity || "N")}</small>
+        <small>${card.type === "character" ? "キャラクター" : "呪文"} / ${escapeHtml(card.rarity || "N")} / ${escapeHtml(attribute)}</small>
       </div>
       <div class="cost-gem">${card.cost}</div>
     </div>
@@ -2268,6 +2382,7 @@ function renderCardPills(card) {
   const rarity = card.rarity || "N";
   const pills = [
     `<span class="pill rarity-pill rarity-${rarity}">${escapeHtml(RARITY_LABELS[rarity] || rarity)}</span>`,
+    `<span class="pill mint">属性 ${escapeHtml(cardAttributeLabel(card.attribute))}</span>`,
     `<span class="pill strong">コスト ${card.cost}</span>`
   ];
   if (card.type === "character" && card.abilities?.includes("block")) {
@@ -2367,6 +2482,13 @@ function chooseGachaRarity() {
   return "N";
 }
 
+function formatRarityRates() {
+  const total = RARITY_RATES.reduce((sum, entry) => sum + entry.weight, 0);
+  return RARITY_RATES
+    .map((entry) => `${entry.rarity} ${Math.round((entry.weight / total) * 100)}%`)
+    .join("、");
+}
+
 function addDeckCard(cardId) {
   if (!getCard(cardId)) return;
   if (state.deckIds.length >= DECK_SIZE) {
@@ -2406,6 +2528,7 @@ function saveCreatedCard() {
     return;
   }
   const icon = (draft.icon || "札").trim().slice(0, 2) || "札";
+  const attribute = normalizeCardAttribute(draft.attribute);
   const characterEffect = buildCharacterEffect(draft.characterEffect, draft.characterEffectValue, tier);
   const cost = draft.type === "character"
     ? calculateCharacterCost(draft.atk, draft.def, draft.block, characterEffect)
@@ -2418,6 +2541,7 @@ function saveCreatedCard() {
       type: "character",
       name,
       icon,
+      attribute,
       cost,
       rarity,
       atk: clampInteger(draft.atk, 0, tier.maxAtk),
@@ -2431,6 +2555,7 @@ function saveCreatedCard() {
       type: "spell",
       name,
       icon,
+      attribute,
       cost,
       rarity,
       spell: {
@@ -2557,7 +2682,7 @@ function startQuestBattle(stageId) {
 }
 
 function buildQuestEnemyDeck(stage) {
-  const allowedRarityIndex = stage.number < 11 ? 1 : stage.number < 26 ? 2 : 3;
+  const allowedRarityIndex = stage.number < 11 ? 1 : stage.number < 26 ? 2 : stage.number < 41 ? 3 : 4;
   const cards = [...DEFAULT_CARDS, ...SET_2_CARDS].filter((card) => RARITY_ORDER.indexOf(card.rarity || "N") <= allowedRarityIndex);
   const weightedPool = cards.flatMap((card) => {
     const rarityIndex = RARITY_ORDER.indexOf(card.rarity || "N");
@@ -2834,7 +2959,7 @@ function attackCard(targetUid) {
   battle.pendingAttackerUid = null;
 
   battle.log.push(`${attackerPlayer.name}の${attackerCard.name}が${targetCard.name}を攻撃しました。双方が反撃ダメージを受けました。`);
-  resolveCharacterEffect(battle, attackerPlayer, defenderPlayer, attackerCard, "attack");
+  resolveCharacterEffect(battle, attackerPlayer, defenderPlayer, attackerCard, "attack", attacker, atkStats.atk);
   destroyDefeatedUnits(battle, attackerPlayer, defenderPlayer);
   setFx("attack", "攻撃", `${attackerCard.name} → ${targetCard.name}`, attackerCard.rarity || "N");
   checkBattleEnd(battle);
@@ -2859,7 +2984,7 @@ function attackPlayer() {
   attacker.canAttack = false;
   battle.pendingAttackerUid = null;
   battle.log.push(`${attackerPlayer.name}の${card.name}が直接攻撃し、${damage}ダメージを与えました。`);
-  resolveCharacterEffect(battle, attackerPlayer, defenderPlayer, card, "attack");
+  resolveCharacterEffect(battle, attackerPlayer, defenderPlayer, card, "attack", attacker, damage);
   setFx("attack", "直接攻撃", `${card.name} / ${damage}ダメージ`, card.rarity || "N");
   checkBattleEnd(battle);
   render();
@@ -2908,7 +3033,7 @@ function resolveSpell(battle, player, card) {
   }
 }
 
-function resolveCharacterEffect(battle, owner, opponent, card, trigger) {
+function resolveCharacterEffect(battle, owner, opponent, card, trigger, unit = null, attackAmount = 0) {
   const characterEffect = card.characterEffect;
   if (!characterEffect || characterEffect.trigger !== trigger) return;
   const value = Math.max(1, clampInteger(characterEffect.value, 1, 999));
@@ -2946,6 +3071,14 @@ function resolveCharacterEffect(battle, owner, opponent, card, trigger) {
   if (characterEffect.effect === "damage") {
     opponent.hp -= value;
     battle.log.push(`${owner.name}の${card.name}の${triggerText}。${opponent.name}に${value}追加ダメージ。`);
+    return;
+  }
+
+  if (characterEffect.effect === "absorb") {
+    if (!unit) return;
+    const healed = healUnitDefense(unit, owner, attackAmount || getEffectiveStats(unit, owner).atk);
+    const resultText = healed > 0 ? `防御を${healed}回復しました。` : "防御はすでに最大です。";
+    battle.log.push(`${owner.name}の${card.name}の${triggerText}。吸収で${resultText}`);
     return;
   }
 
@@ -2994,6 +3127,17 @@ function destroyDefeatedUnits(battle, playerA, playerB) {
 function damageUnit(unit, owner, damage) {
   const multiplier = levelMultiplier(owner.level);
   unit.baseDefRemaining -= damage / multiplier;
+}
+
+function healUnitDefense(unit, owner, amount) {
+  const card = getCard(unit.cardId);
+  if (!card || card.type !== "character") return 0;
+  const multiplier = levelMultiplier(owner.level);
+  const before = getEffectiveStats(unit, owner).def;
+  const currentBaseDef = Number.isFinite(unit.baseDefRemaining) ? unit.baseDefRemaining : card.def;
+  unit.baseDefRemaining = Math.min(card.def, currentBaseDef + Math.max(0, amount) / multiplier);
+  const after = getEffectiveStats(unit, owner).def;
+  return Math.max(0, after - before);
 }
 
 function maybeScheduleAiTurn() {
@@ -3179,7 +3323,7 @@ function aiAttackCard(battle, attacker, target) {
   damageUnit(attacker, ai, defStats.atk);
   attacker.canAttack = false;
   battle.log.push(`AIの${attackerCard.name}が${targetCard.name}を攻撃しました。`);
-  resolveCharacterEffect(battle, ai, human, attackerCard, "attack");
+  resolveCharacterEffect(battle, ai, human, attackerCard, "attack", attacker, atkStats.atk);
   destroyDefeatedUnits(battle, ai, human);
   setFx("attack", "AI攻撃", `${attackerCard.name} → ${targetCard.name}`, attackerCard.rarity || "N");
   checkBattleEnd(battle);
@@ -3194,7 +3338,7 @@ function aiAttackPlayer(battle, attacker) {
   human.hp -= damage;
   attacker.canAttack = false;
   battle.log.push(`AIの${card.name}が直接攻撃し、${damage}ダメージを与えました。`);
-  resolveCharacterEffect(battle, ai, human, card, "attack");
+  resolveCharacterEffect(battle, ai, human, card, "attack", attacker, damage);
   setFx("attack", "AI直接攻撃", `${card.name} / ${damage}ダメージ`, card.rarity || "N");
   checkBattleEnd(battle);
 }
@@ -3332,7 +3476,7 @@ function getDailyAuctionListings() {
 }
 
 function calculateMarketCardPrice(card) {
-  const rarityBase = { N: 70, R: 180, SR: 520, SSR: 1400 };
+  const rarityBase = { N: 70, R: 180, SR: 520, SSR: 1400, UR: 3600 };
   const rarity = card.rarity || "N";
   const statValue = card.type === "character"
     ? Math.ceil(((card.atk || 0) * 1.2 + (card.def || 0)) * 6)
@@ -3559,6 +3703,7 @@ function characterEffectCostBonus(characterEffect) {
   if (characterEffect.effect === "level") return value * 5;
   if (characterEffect.effect === "damage") return value * 2;
   if (characterEffect.effect === "graveHand") return value * 8;
+  if (characterEffect.effect === "absorb") return value * 12;
   return 0;
 }
 
@@ -3571,6 +3716,7 @@ function characterEffectText(characterEffect) {
   if (characterEffect.effect === "level") return `${prefix}: レベルを${characterEffect.value}上げる`;
   if (characterEffect.effect === "damage") return `${prefix}: 相手プレイヤーに${characterEffect.value}追加ダメージ`;
   if (characterEffect.effect === "graveHand") return `${prefix}: 手札から${characterEffect.value}枚まで墓地へ送る`;
+  if (characterEffect.effect === "absorb") return `${prefix}: 自分の攻撃力分、防御を回復`;
   return "効果なし";
 }
 
@@ -3583,6 +3729,7 @@ function characterEffectShortText(characterEffect) {
   if (characterEffect.effect === "level") return `${prefix}: LV+${characterEffect.value}`;
   if (characterEffect.effect === "damage") return `${prefix}: ${characterEffect.value}追加`;
   if (characterEffect.effect === "graveHand") return `${prefix}: 手札${characterEffect.value}墓地`;
+  if (characterEffect.effect === "absorb") return `${prefix}: 吸収`;
   return "";
 }
 
@@ -3590,6 +3737,7 @@ function clampCreatorDraftToTier() {
   const draft = state.creatorDraft;
   const tier = getCreatorTier(draft.tierId);
   if (!draft.tierId) draft.tierId = tier.id;
+  draft.attribute = normalizeCardAttribute(draft.attribute);
   if (draft.type === "character") {
     draft.atk = clampInteger(draft.atk, 0, tier.maxAtk);
     draft.def = clampInteger(draft.def, 0, tier.maxDef);
@@ -3617,6 +3765,7 @@ function previewDraftCard(cost, tier = getCreatorTier()) {
       type: "character",
       name: draft.name.trim() || "新しいキャラクター",
       icon: draft.icon || "札",
+      attribute: normalizeCardAttribute(draft.attribute),
       cost,
       rarity,
       atk: clampInteger(draft.atk, 0, tier.maxAtk),
@@ -3630,6 +3779,7 @@ function previewDraftCard(cost, tier = getCreatorTier()) {
     type: "spell",
     name: draft.name.trim() || "新しい呪文",
     icon: draft.icon || "札",
+    attribute: normalizeCardAttribute(draft.attribute),
     cost,
     rarity,
     spell: {
@@ -3660,7 +3810,8 @@ function effectiveDrawValue(value) {
 
 function calculateCreatedCardRarity(cost, tier = null) {
   let rarity = "N";
-  if (cost >= 8) rarity = "SSR";
+  if (cost >= 12) rarity = "UR";
+  else if (cost >= 8) rarity = "SSR";
   else if (cost >= 5) rarity = "SR";
   else if (cost >= 3) rarity = "R";
   return tier ? maxRarity(rarity, tier.minRarity) : rarity;
@@ -3681,10 +3832,16 @@ function getCardArtProfile(card) {
     sakura: { a: "#ffe0ee", b: "#ff8fbd", c: "#ffffff" },
     moon: { a: "#e7e1ff", b: "#8fb7ff", c: "#fff7c7" },
     water: { a: "#dff6ff", b: "#80d8ff", c: "#ffffff" },
+    wind: { a: "#e7ffe9", b: "#66d7a4", c: "#ffffff" },
+    light: { a: "#fff8dc", b: "#ffd66f", c: "#ffffff" },
+    sky: { a: "#e1f2ff", b: "#75b9ff", c: "#ffffff" },
+    memory: { a: "#efe7ff", b: "#a58cff", c: "#ffffff" },
+    neutral: { a: "#f4f6fb", b: "#b8c0d9", c: "#ffffff" },
     guard: { a: "#e4fbf2", b: "#56c8a5", c: "#ffffff" },
     gold: { a: "#fff2cf", b: "#f3b43f", c: "#ffffff" },
     spell: { a: "#dff6ff", b: "#a58cff", c: "#ffffff" }
   };
+  const attributeTheme = themes[normalizeCardAttribute(card.attribute)] || themes.neutral;
 
   const profiles = {
     "char-sprout-fairy": { ...themes.guard, kind: "fairy", features: ["wings", "sprout"], spriteIndex: 0 },
@@ -3710,19 +3867,19 @@ function getCardArtProfile(card) {
   if (profiles[card.id]) return profiles[card.id];
 
   if (card.type === "spell") {
-    if (card.spell?.effect === "draw") return { ...themes.spell, kind: "book" };
-    if (card.spell?.effect === "maxCost") return { ...themes.water, kind: "fountain" };
-    if (card.spell?.effect === "heal") return { ...themes.sakura, kind: "prayer" };
-    return { ...themes.spell, kind: "ritual" };
+    if (card.spell?.effect === "draw") return { ...attributeTheme, kind: "book" };
+    if (card.spell?.effect === "maxCost") return { ...attributeTheme, kind: "fountain" };
+    if (card.spell?.effect === "heal") return { ...attributeTheme, kind: "prayer" };
+    return { ...attributeTheme, kind: "ritual" };
   }
 
   if (text.includes("龍")) return { ...themes.gold, kind: "dragon" };
   if (text.includes("狐")) return { ...themes.moon, kind: "fox", features: ["ears", "tail", "staff"] };
   if (text.includes("盾") || text.includes("壁") || card.abilities?.includes("block")) return { ...themes.guard, kind: "guardian", features: ["shield", "spear"] };
-  if (text.includes("弓") || text.includes("射")) return { ...themes.water, kind: "archer", features: ["bow"] };
-  if (text.includes("姫") || text.includes("女王")) return { ...themes.moon, kind: "queen", features: ["crown", "staff"] };
-  if (text.includes("魔")) return { ...themes.water, kind: "mage", features: ["staff"] };
-  return { ...themes.sakura, kind: "swordsman", features: ["sword"] };
+  if (text.includes("弓") || text.includes("射")) return { ...attributeTheme, kind: "archer", features: ["bow"] };
+  if (text.includes("姫") || text.includes("女王")) return { ...attributeTheme, kind: "queen", features: ["crown", "staff"] };
+  if (text.includes("魔")) return { ...attributeTheme, kind: "mage", features: ["staff"] };
+  return { ...attributeTheme, kind: "swordsman", features: ["sword"] };
 }
 
 function getEffectiveStats(unit, owner) {
@@ -4562,10 +4719,10 @@ function isValidCustomCard(card) {
 }
 
 function upgradeCustomCard(card) {
-  if (card.rarity) return card;
   return {
     ...card,
-    rarity: calculateCreatedCardRarity(card.cost)
+    rarity: card.rarity || calculateCreatedCardRarity(card.cost),
+    attribute: normalizeCardAttribute(card.attribute)
   };
 }
 
