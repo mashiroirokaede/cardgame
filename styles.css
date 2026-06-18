@@ -1736,6 +1736,130 @@ label {
   line-height: 1.6;
 }
 
+.tutorial-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  background:
+    linear-gradient(135deg, rgba(255, 224, 238, 0.82), rgba(223, 246, 255, 0.9)),
+    rgba(255, 255, 255, 0.95);
+}
+
+.tutorial-hero h2 {
+  margin: 10px 0 8px;
+  font-size: clamp(22px, 4vw, 34px);
+  line-height: 1.25;
+}
+
+.tutorial-hero p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.tutorial-actions {
+  display: grid;
+  min-width: min(240px, 100%);
+  gap: 8px;
+}
+
+.tutorial-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.tutorial-grid.compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.tutorial-card,
+.tutorial-step {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow-soft);
+}
+
+.tutorial-card {
+  display: grid;
+  gap: 8px;
+}
+
+.tutorial-card strong,
+.tutorial-step strong {
+  font-size: 16px;
+}
+
+.tutorial-card p,
+.tutorial-step span {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.tutorial-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  background: var(--pink-soft);
+  color: #c9467d;
+  font-weight: 800;
+}
+
+.tutorial-steps,
+.tutorial-tip-list,
+.matchup-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.tutorial-step {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.tutorial-tip-list div,
+.matchup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.tutorial-tip-list span,
+.matchup-row span {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.matchup-row strong {
+  min-width: 44px;
+}
+
+.matchup-row.neutral {
+  background: rgba(246, 247, 251, 0.88);
+}
+
+.tutorial-finish {
+  display: grid;
+  gap: 12px;
+}
+
+.tutorial-finish h2 {
+  margin: 0;
+}
+
 .cloud-panel {
   display: flex;
   align-items: center;
@@ -2367,6 +2491,19 @@ label {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .tutorial-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .tutorial-actions {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .tutorial-grid,
+  .tutorial-grid.compact {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .split {
     grid-template-columns: 1fr;
   }
@@ -2434,8 +2571,22 @@ label {
   }
 
   .menu-grid,
-  .form-grid {
+  .form-grid,
+  .tutorial-grid,
+  .tutorial-grid.compact {
     grid-template-columns: 1fr;
+  }
+
+  .tutorial-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .tutorial-step,
+  .tutorial-tip-list div,
+  .matchup-row {
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: start;
   }
 
   .scoreboard {

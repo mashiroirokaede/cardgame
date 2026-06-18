@@ -12,7 +12,8 @@ const STORAGE_KEYS = {
   marketPurchases: "levelLink.marketPurchases.v1",
   lastDailyReward: "levelLink.lastDailyReward.v1",
   aiBattle: "levelLink.aiBattle.v1",
-  cloudEnabled: "levelLink.cloudEnabled.v1"
+  cloudEnabled: "levelLink.cloudEnabled.v1",
+  tutorialSeen: "levelLink.tutorialSeen.v1"
 };
 
 const MAX_HP = 500;
@@ -685,6 +686,7 @@ const state = {
   gachaHistory: [],
   gachaResults: [],
   activeGachaSetId: DEFAULT_GACHA_SET_ID,
+  tutorialSeen: false,
   deckIds: [],
   battleHandSort: "draw",
   cardDetailId: null,
@@ -749,6 +751,7 @@ function init() {
   state.marketPurchases = readMarketPurchases();
   state.lastDailyReward = readLastDailyReward();
   state.gachaHistory = readGachaHistory();
+  state.tutorialSeen = readTutorialSeen();
   normalizeInventory();
   grantDailyRewardIfAvailable();
   state.deckIds = sanitizeDeck(readDeck());
@@ -756,6 +759,9 @@ function init() {
     state.deckIds = buildDefaultDeck();
     state.deckIds = sanitizeDeck(state.deckIds);
     saveDeck();
+  }
+  if (!state.tutorialSeen) {
+    state.screen = "tutorial";
   }
   state.cloud.enabled = readCloudEnabled();
   attachEvents();
@@ -782,6 +788,33 @@ function handleClick(event) {
     state.graveChoice = null;
     state.screen = button.dataset.screen;
     render();
+    return;
+  }
+
+  if (action === "finish-tutorial") {
+    saveTutorialSeen(true);
+    state.screen = "menu";
+    render();
+    return;
+  }
+
+  if (action === "tutorial-gacha") {
+    saveTutorialSeen(true);
+    state.screen = "gacha";
+    render();
+    return;
+  }
+
+  if (action === "tutorial-deck") {
+    saveTutorialSeen(true);
+    state.screen = "deck";
+    render();
+    return;
+  }
+
+  if (action === "tutorial-ai") {
+    saveTutorialSeen(true);
+    startBattle("ai");
     return;
   }
 
@@ -1160,6 +1193,7 @@ function renderTopbar() {
       </div>
       <nav class="top-actions" aria-label="メインメニュー">
         <button class="ghost" data-action="screen" data-screen="menu">メニュー</button>
+        <button class="ghost" data-action="screen" data-screen="tutorial">遊び方</button>
         <button class="ghost" data-action="screen" data-screen="gacha">ガチャ</button>
         <button class="ghost" data-action="screen" data-screen="quest">クエスト</button>
         <button class="ghost" data-action="screen" data-screen="market">ショップ</button>
@@ -1175,6 +1209,7 @@ function renderTopbar() {
 }
 
 function renderScreen() {
+  if (state.screen === "tutorial") return renderTutorial();
   if (state.screen === "gacha") return renderGacha();
   if (state.screen === "quest") return renderQuest();
   if (state.screen === "market") return renderMarket();
@@ -1189,6 +1224,7 @@ function renderScreen() {
 function renderMenu() {
   return `
     <section class="menu-grid">
+      ${renderMenuTile("遊び方", "初めて遊ぶ人向けに、カード入手からバトルの流れまで確認できます。", "？", "tutorial")}
       ${renderMenuTile("ガチャ", "ガチャ玉を使ってカードと創造チケットを入手します。", "召", "gacha")}
       ${renderMenuTile("クエスト", "ステージを順番にクリアしてゴールドを集めます。", "冒", "quest")}
       ${renderMenuTile("ショップ・オークション", "ゴールドでカードを買ったり、余ったカードを売却します。", "市", "market")}
@@ -1214,6 +1250,130 @@ function renderMenuTile(title, body, icon, screen) {
       <span class="menu-icon">${escapeHtml(icon)}</span>
       <span><strong>${escapeHtml(title)}</strong>${escapeHtml(body)}</span>
     </button>
+  `;
+}
+
+function renderTutorial() {
+  const matchupRows = CARD_ATTRIBUTES
+    .filter((attribute) => attribute.id !== "neutral")
+    .map((attribute) => `
+      <div class="matchup-row">
+        <strong>${escapeHtml(attribute.label)}</strong>
+        <span>→ ${escapeHtml(cardAttributeLabel(cardAttributeAdvantageTarget(attribute.id)))}に有利</span>
+      </div>
+    `).join("");
+
+  return `
+    <section class="stack tutorial-screen">
+      <div class="band tutorial-hero">
+        <div>
+          <span class="pill pink strong">初回ガイド</span>
+          <h2>まずは「カードを集めて、AI戦で試す」と覚えればOKです</h2>
+          <p>このゲームは、キャラクターを出して相手HPを0にするカードバトルです。手札を墓地へ送るとレベルが上がり、自分のキャラ全体が強くなるのが大事な特徴です。</p>
+        </div>
+        <div class="tutorial-actions">
+          <button class="primary" data-action="tutorial-gacha">ガチャへ進む</button>
+          <button class="accent" data-action="tutorial-ai">AI戦で試す</button>
+          <button data-action="finish-tutorial">メニューへ</button>
+        </div>
+      </div>
+
+      <div class="tutorial-grid">
+        ${renderTutorialCard("1", "カードを集める", `${GACHA_BALL_NAME}を使うと、1個で5枚カードが出ます。10連は${GACHA_TEN_COST}個で50枚です。`) }
+        ${renderTutorialCard("2", "山札を作る", `山札は${MIN_DECK_SIZE}〜${DECK_SIZE}枚です。持っている枚数までしか入れられません。迷ったら最初の山札のままで大丈夫です。`) }
+        ${renderTutorialCard("3", "AI戦で練習", "最初はAI戦がおすすめです。途中でやめても、次にAI戦を開いた時に続きから遊べます。") }
+        ${renderTutorialCard("4", "クエストで報酬", `クエスト初回クリアで${GACHA_BALL_NAME}10個、勝利で${GOLD_NAME}が手に入ります。`) }
+      </div>
+
+      <div class="band">
+        <div class="section-title">
+          <div>
+            <h2>バトルの基本</h2>
+            <p>毎ターン、コストを使って行動します。手札はタップすると大きく表示され、そこから召喚・使用・墓地送りを選べます。</p>
+          </div>
+        </div>
+        <div class="tutorial-steps">
+          ${renderTutorialStep("ターン開始", `コストが最大まで回復し、山札から${TURN_DRAW_COUNT}枚ドローします。召喚済みキャラはまた攻撃できるようになります。`)}
+          ${renderTutorialStep("召喚・呪文", "キャラカードは場に出ます。呪文カードは効果を使ったあと墓地へ行きます。召喚したターンのキャラは攻撃できません。")}
+          ${renderTutorialStep("墓地送り", "手札のカードを墓地へ送ると、そのカードのコスト分だけレベルが上がります。レベルが上がるほどキャラの攻撃・防御に倍率がかかります。")}
+          ${renderTutorialStep("攻撃", "キャラは1ターンに1回攻撃できます。キャラ同士の戦闘では、攻撃側も反撃ダメージを受けます。")}
+        </div>
+      </div>
+
+      <div class="split">
+        <div class="band stack">
+          <div class="section-title">
+            <div>
+              <h2>勝つための考え方</h2>
+              <p>強いカードを出すだけでなく、いつ墓地へ送るかがかなり大事です。</p>
+            </div>
+          </div>
+          <div class="tutorial-tip-list">
+            <div><strong>序盤</strong><span>低コストキャラやドローで手札を整えます。</span></div>
+            <div><strong>中盤</strong><span>不要なカードを墓地へ送り、レベル倍率を伸ばします。</span></div>
+            <div><strong>守り</strong><span>ブロック持ちのキャラは攻撃対象を引き受けます。</span></div>
+            <div><strong>攻め</strong><span>属性有利や吸収キャラを使うと戦闘が有利になります。</span></div>
+          </div>
+        </div>
+
+        <div class="band stack">
+          <div class="section-title">
+            <div>
+              <h2>属性相性</h2>
+              <p>キャラ同士の戦闘では、有利なら与えるダメージが${formatMultiplier(ATTRIBUTE_ADVANTAGE_MULTIPLIER)}、不利なら${formatMultiplier(ATTRIBUTE_DISADVANTAGE_MULTIPLIER)}になります。</p>
+            </div>
+          </div>
+          <div class="matchup-grid">
+            ${matchupRows}
+            <div class="matchup-row neutral"><strong>無</strong><span>相性なし</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="band">
+        <div class="section-title">
+          <div>
+            <h2>画面で迷った時</h2>
+            <p>スマホではカードが小さく表示されます。カードを一度選ぶと詳細が開くので、そこで効果を確認してから行動できます。</p>
+          </div>
+        </div>
+        <div class="tutorial-grid compact">
+          ${renderTutorialCard("灰", "コスト不足", "使えるコストより高いカードは灰色になります。今は出せない合図です。")}
+          ${renderTutorialCard("並", "手札の並べ替え", "バトル中の手札は、引いた順・コスト低い順・コスト高い順に並べ替えできます。")}
+          ${renderTutorialCard("雲", "データ保存", "Googleログインすると、スマホとPCでゲームデータを引き継げます。")}
+          ${renderTutorialCard("通", "オンライン", "部屋IDを作って相手に伝えるとオンライン対戦ができます。")}
+        </div>
+      </div>
+
+      <div class="band tutorial-finish">
+        <h2>準備できたら始めましょう</h2>
+        <div class="toolbar">
+          <button class="primary" data-action="tutorial-gacha">ガチャでカード入手</button>
+          <button data-action="tutorial-deck">山札を確認</button>
+          <button class="accent" data-action="tutorial-ai">AI戦を始める</button>
+          <button data-action="finish-tutorial">メニューへ戻る</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderTutorialCard(mark, title, body) {
+  return `
+    <div class="tutorial-card">
+      <span class="tutorial-mark">${escapeHtml(mark)}</span>
+      <strong>${escapeHtml(title)}</strong>
+      <p>${escapeHtml(body)}</p>
+    </div>
+  `;
+}
+
+function renderTutorialStep(title, body) {
+  return `
+    <div class="tutorial-step">
+      <strong>${escapeHtml(title)}</strong>
+      <span>${escapeHtml(body)}</span>
+    </div>
   `;
 }
 
@@ -4932,6 +5092,7 @@ function collectCloudSaveData() {
     questClears: state.questClears,
     marketPurchases: state.marketPurchases,
     lastDailyReward: state.lastDailyReward,
+    tutorialSeen: state.tutorialSeen,
     gachaHistory: state.gachaHistory.slice(0, GACHA_HISTORY_LIMIT),
     deckIds: state.deckIds,
     activeGachaSetId: state.activeGachaSetId,
@@ -4956,6 +5117,7 @@ function sanitizeCloudSaveData(data) {
     questClears: normalizeQuestClears(data.questClears),
     marketPurchases: normalizeMarketPurchases(data.marketPurchases),
     lastDailyReward: typeof data.lastDailyReward === "string" ? data.lastDailyReward : "",
+    tutorialSeen: Boolean(data.tutorialSeen),
     gachaHistory: Array.isArray(data.gachaHistory) ? data.gachaHistory.slice(0, GACHA_HISTORY_LIMIT) : [],
     deckIds: Array.isArray(data.deckIds) ? data.deckIds : [],
     activeGachaSetId: typeof data.activeGachaSetId === "string" ? data.activeGachaSetId : DEFAULT_GACHA_SET_ID,
@@ -4973,6 +5135,7 @@ function applyCloudSaveData(data) {
   state.questClears = data.questClears;
   state.marketPurchases = data.marketPurchases;
   state.lastDailyReward = data.lastDailyReward;
+  state.tutorialSeen = data.tutorialSeen;
   state.gachaHistory = data.gachaHistory;
   state.gachaResults = [];
   state.activeGachaSetId = GACHA_SETS.some((set) => set.id === data.activeGachaSetId)
@@ -4995,6 +5158,7 @@ function persistLocalSaveData() {
   localStorage.setItem(STORAGE_KEYS.questClears, JSON.stringify(normalizeQuestClears(state.questClears)));
   localStorage.setItem(STORAGE_KEYS.marketPurchases, JSON.stringify(normalizeMarketPurchases(state.marketPurchases)));
   localStorage.setItem(STORAGE_KEYS.lastDailyReward, state.lastDailyReward);
+  localStorage.setItem(STORAGE_KEYS.tutorialSeen, state.tutorialSeen ? "1" : "0");
   localStorage.setItem(STORAGE_KEYS.gachaHistory, JSON.stringify(state.gachaHistory.slice(0, GACHA_HISTORY_LIMIT)));
   localStorage.setItem(STORAGE_KEYS.deck, JSON.stringify(state.deckIds));
   const aiBattle = getSerializableAiBattle();
@@ -5020,6 +5184,16 @@ function readCloudEnabled() {
 
 function saveCloudEnabled(enabled) {
   localStorage.setItem(STORAGE_KEYS.cloudEnabled, enabled ? "1" : "0");
+}
+
+function readTutorialSeen() {
+  return localStorage.getItem(STORAGE_KEYS.tutorialSeen) === "1";
+}
+
+function saveTutorialSeen(seen) {
+  state.tutorialSeen = Boolean(seen);
+  localStorage.setItem(STORAGE_KEYS.tutorialSeen, state.tutorialSeen ? "1" : "0");
+  queueCloudSave();
 }
 
 function cloudStatusLabel() {
