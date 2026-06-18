@@ -65,14 +65,48 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isRoomPlayer(data) {
+      return signedIn()
+        && data.players is list
+        && data.players.size() > 0
+        && (
+          data.players[0].uid == request.auth.uid
+          || (
+            data.players.size() > 1
+            && data.players[1] != null
+            && data.players[1].uid == request.auth.uid
+          )
+        );
+    }
+
+    function isJoiningOpenRoom() {
+      return signedIn()
+        && resource.data.players is list
+        && resource.data.players.size() > 1
+        && resource.data.players[1] == null
+        && request.resource.data.players[1].uid == request.auth.uid;
+    }
+
     match /users/{userId}/saves/{saveId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /rooms/{roomId} {
+      allow create: if signedIn() && request.resource.data.players[0].uid == request.auth.uid;
+      allow read: if signedIn();
+      allow update: if isRoomPlayer(resource.data) || isJoiningOpenRoom();
+      allow delete: if isRoomPlayer(resource.data);
     }
   }
 }
 ```
 
 このルールで、自分のGoogleアカウントの保存データだけ読めるようになります。
+オンライン対戦の部屋は、ログイン済みユーザーが部屋IDで読み込み、参加者だけが更新できます。
 
 ## 8. GitHub Pagesへ反映する
 
@@ -92,6 +126,7 @@ service cloud.firestore {
 - カード創造チケット
 - ガチャ履歴
 - AI戦の途中データ
+- オンライン対戦の部屋データ
 
 ## 注意
 

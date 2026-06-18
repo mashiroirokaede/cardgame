@@ -70,6 +70,18 @@ const CARD_ATTRIBUTES = [
   { id: "neutral", label: "無" }
 ];
 
+const ATTRIBUTE_ADVANTAGE = {
+  sakura: "wind",
+  wind: "water",
+  water: "moon",
+  moon: "memory",
+  memory: "sky",
+  sky: "light",
+  light: "sakura"
+};
+const ATTRIBUTE_ADVANTAGE_MULTIPLIER = 1.3;
+const ATTRIBUTE_DISADVANTAGE_MULTIPLIER = 0.8;
+
 const RARITY_RATES = [
   { rarity: "N", weight: 61 },
   { rarity: "R", weight: 25 },
@@ -705,6 +717,15 @@ const state = {
     lastSync: "",
     saving: false,
     applyingRemote: false
+  },
+  online: {
+    roomId: "",
+    inputRoomId: "",
+    playerIndex: null,
+    room: null,
+    message: "",
+    busy: false,
+    unsubscribe: null
   }
 };
 
@@ -747,6 +768,7 @@ function attachEvents() {
   app.addEventListener("input", handleInput);
   app.addEventListener("change", handleInput);
   window.addEventListener("beforeunload", syncAiBattleSave);
+  window.addEventListener("beforeunload", leaveOnlineRoomSilently);
 }
 
 function handleClick(event) {
@@ -866,6 +888,26 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "create-online-room") {
+    createOnlineRoom();
+    return;
+  }
+
+  if (action === "join-online-room") {
+    joinOnlineRoom();
+    return;
+  }
+
+  if (action === "leave-online-room") {
+    leaveOnlineRoom();
+    return;
+  }
+
+  if (action === "start-online-battle") {
+    startOnlineBattle();
+    return;
+  }
+
   if (action === "add-deck-card") {
     addDeckCard(button.dataset.cardId);
     return;
@@ -942,6 +984,7 @@ function handleClick(event) {
   if (action === "cancel-attack") {
     state.battle.pendingAttackerUid = null;
     render();
+    syncOnlineBattle();
     return;
   }
 
@@ -959,6 +1002,10 @@ function handleClick(event) {
     const previousMode = state.battle?.mode || "local";
     const previousQuestStageId = state.battle?.questStageId;
     state.battle = null;
+    if (previousMode === "online") {
+      resetOnlineRoomBattle();
+      return;
+    }
     if (previousMode === "ai") clearSavedAiBattle();
     if (previousMode === "quest" && previousQuestStageId) {
       startQuestBattle(previousQuestStageId);
@@ -971,6 +1018,12 @@ function handleClick(event) {
 function handleInput(event) {
   const field = event.target.dataset.field;
   if (!field) return;
+
+  if (field === "onlineRoomId") {
+    state.online.inputRoomId = normalizeOnlineRoomId(event.target.value);
+    render();
+    return;
+  }
 
   if (event.target.type === "checkbox") {
     state.creatorDraft[field] = event.target.checked;
@@ -1113,6 +1166,7 @@ function renderTopbar() {
         <button class="ghost" data-action="screen" data-screen="deck">山札編成</button>
         <button class="ghost" data-action="screen" data-screen="creator">カード作成</button>
         <button class="ghost" data-action="screen" data-screen="cloud">クラウド保存</button>
+        <button class="ghost" data-action="screen" data-screen="online">オンライン</button>
         <button class="${battleMode ? "accent" : "ghost"}" data-action="start-battle">バトル開始</button>
         <button class="ghost" data-action="start-ai-battle">AI戦</button>
       </nav>
@@ -1149,7 +1203,7 @@ function renderMenu() {
         <span class="menu-icon">AI</span>
         <span><strong>AIとバトル</strong>1人で遊べるCPU対戦を開始します。AIは召喚、呪文、墓地送り、攻撃を自動で行います。</span>
       </button>
-      ${renderMenuTile("オンライン対戦", "Firebase連携用の画面枠です。第3段階で部屋ID対戦に拡張します。", "通", "online")}
+      ${renderMenuTile("オンライン対戦", "Googleログイン後、部屋IDを作って離れた相手と対戦できます。", "通", "online")}
     </section>
   `;
 }
@@ -1750,34 +1804,481 @@ function renderSpellCreatorFields(draft, tier) {
   `;
 }
 
+function isOnlineBattle(battle = state.battle) {
+  return battle?.mode === "online";
+}
+
+function getOnlinePlayerIndex() {
+  if (Number.isInteger(state.online.playerIndex)) return state.online.playerIndex;
+  const user = state.cloud.user;
+  const room = state.online.room;
+  if (!user || !room) return null;
+  const index = getOnlineRoomPlayers(room).findIndex((player) => player?.uid === user.uid);
+  return index === -1 ? null : index;
+}
+
+function canControlBattle(battle = state.battle) {
+  if (!isOnlineBattle(battle)) return true;
+  const index = getOnlinePlayerIndex();
+  return Number.isInteger(index) && battle.phase === "battle" && battle.activePlayer === index;
+}
+
+function normalizeOnlineRoomId(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .slice(0, 6);
+}
+
+function generateOnlineRoomId() {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  return Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+}
+
+function getOnlineRoomRef(roomId) {
+  return cloudApi.doc(cloudApi.db, "rooms", normalizeOnlineRoomId(roomId));
+}
+
+function getOnlineRoomPlayers(room) {
+  const players = Array.isArray(room?.players) ? room.players : [];
+  return [players[0] || null, players[1] || null];
+}
+
+function getOnlineDisplayName() {
+  const user = state.cloud.user;
+  return user?.displayName || user?.email?.split("@")[0] || "プレイヤー";
+}
+
+function getOnlineDeckSnapshot() {
+  const deckIds = sanitizeDeck(state.deckIds);
+  if (deckIds.length < MIN_DECK_SIZE || deckIds.length > DECK_SIZE) {
+    throw new Error("オンライン対戦には100〜300枚の山札が必要です。山札編成を確認してください。");
+  }
+  const deckCustomIds = new Set(deckIds.filter((cardId) => state.customCards.some((card) => card.id === cardId)));
+  const customCards = state.customCards
+    .filter((card) => deckCustomIds.has(card.id))
+    .map((card) => upgradeCustomCard(card));
+  return {
+    deckIds,
+    customCards
+  };
+}
+
+function createOnlinePlayerProfile() {
+  const user = state.cloud.user;
+  const deckSnapshot = getOnlineDeckSnapshot();
+  return {
+    uid: user.uid,
+    name: getOnlineDisplayName(),
+    deckIds: deckSnapshot.deckIds,
+    deckCount: deckSnapshot.deckIds.length,
+    customCards: deckSnapshot.customCards
+  };
+}
+
+function applyOnlineRoomCustomCards(room) {
+  getOnlineRoomPlayers(room).forEach((player) => {
+    (player?.customCards || []).forEach((card) => {
+      const upgraded = upgradeCustomCard(card);
+      if (!upgraded?.id || getCard(upgraded.id)) return;
+      state.customCards.push(upgraded);
+    });
+  });
+}
+
+function normalizeOnlineBattle(battle, roomId) {
+  if (!battle) return null;
+  applyOnlineRoomCustomCards({ players: battle.roomPlayers || state.online.room?.players || [] });
+  return {
+    ...battle,
+    mode: "online",
+    roomId: roomId || battle.roomId || state.online.roomId,
+    aiPlayer: null,
+    aiScheduled: false,
+    aiThinking: false
+  };
+}
+
+function ensureOnlineReady() {
+  if (!cloudApi || !state.cloud.configured) {
+    state.online.message = "Firebase設定がまだ読み込まれていません。少し待ってからもう一度試してください。";
+    render();
+    return false;
+  }
+  if (!state.cloud.user) {
+    state.online.message = "オンライン対戦にはGoogleログインが必要です。";
+    render();
+    return false;
+  }
+  try {
+    getOnlineDeckSnapshot();
+  } catch (error) {
+    state.online.message = error.message || "オンライン対戦用の山札を確認してください。";
+    render();
+    return false;
+  }
+  return true;
+}
+
+async function createOnlineRoom() {
+  if (!ensureOnlineReady() || state.online.busy) return;
+  state.online.busy = true;
+  state.online.message = "部屋を作成しています...";
+  render();
+
+  try {
+    const player = createOnlinePlayerProfile();
+    let roomId = "";
+    let roomRef = null;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      roomId = generateOnlineRoomId();
+      roomRef = getOnlineRoomRef(roomId);
+      const existing = await cloudApi.getDoc(roomRef);
+      if (!existing.exists()) break;
+      roomRef = null;
+    }
+    if (!roomRef) throw new Error("部屋IDの作成に失敗しました。もう一度試してください。");
+    const room = {
+      roomId,
+      status: "waiting",
+      hostUid: player.uid,
+      createdAt: cloudApi.serverTimestamp(),
+      updatedAt: cloudApi.serverTimestamp(),
+      players: [player, null],
+      battle: null
+    };
+    await cloudApi.setDoc(roomRef, room);
+    enterOnlineRoom(roomId, 0);
+    state.online.message = `部屋ID ${roomId} を作成しました。`;
+  } catch (error) {
+    state.online.message = `部屋作成に失敗しました。${error?.message || ""}`;
+    render();
+  } finally {
+    state.online.busy = false;
+    render();
+  }
+}
+
+async function joinOnlineRoom() {
+  if (!ensureOnlineReady() || state.online.busy) return;
+  const roomId = normalizeOnlineRoomId(state.online.inputRoomId);
+  if (!roomId) return;
+  state.online.busy = true;
+  state.online.message = "部屋に参加しています...";
+  render();
+
+  try {
+    const roomRef = getOnlineRoomRef(roomId);
+    const snapshot = await cloudApi.getDoc(roomRef);
+    if (!snapshot.exists()) throw new Error("その部屋IDは見つかりません。");
+    const room = snapshot.data();
+    const players = getOnlineRoomPlayers(room);
+    const userIndex = players.findIndex((player) => player?.uid === state.cloud.user.uid);
+    if (userIndex !== -1) {
+      enterOnlineRoom(roomId, userIndex);
+      state.online.message = "部屋に戻りました。";
+      return;
+    }
+    if (players[1]?.uid) throw new Error("この部屋はすでに2人そろっています。");
+    players[1] = createOnlinePlayerProfile();
+    await cloudApi.setDoc(roomRef, {
+      status: "ready",
+      players,
+      updatedAt: cloudApi.serverTimestamp()
+    }, { merge: true });
+    enterOnlineRoom(roomId, 1);
+    state.online.message = "部屋に参加しました。";
+  } catch (error) {
+    state.online.message = `参加に失敗しました。${error?.message || ""}`;
+    render();
+  } finally {
+    state.online.busy = false;
+    render();
+  }
+}
+
+function enterOnlineRoom(roomId, playerIndex) {
+  leaveOnlineRoomSilently();
+  state.online.roomId = normalizeOnlineRoomId(roomId);
+  state.online.inputRoomId = state.online.roomId;
+  state.online.playerIndex = playerIndex;
+  state.screen = "online";
+  subscribeOnlineRoom(state.online.roomId);
+}
+
+function subscribeOnlineRoom(roomId) {
+  if (!cloudApi?.onSnapshot) return;
+  const roomRef = getOnlineRoomRef(roomId);
+  state.online.unsubscribe = cloudApi.onSnapshot(roomRef, (snapshot) => {
+    if (!snapshot.exists()) {
+      state.online.message = "部屋が見つからなくなりました。";
+      state.online.room = null;
+      if (isOnlineBattle(state.battle)) state.battle = null;
+      render();
+      return;
+    }
+    const room = snapshot.data();
+    applyOnlineRoomCustomCards(room);
+    state.online.room = room;
+    state.online.roomId = room.roomId || roomId;
+    const index = getOnlineRoomPlayers(room).findIndex((player) => player?.uid === state.cloud.user?.uid);
+    if (index !== -1) state.online.playerIndex = index;
+    if (room.battle) {
+      state.battle = normalizeOnlineBattle(room.battle, state.online.roomId);
+      state.screen = "battle";
+    } else if (isOnlineBattle(state.battle)) {
+      state.battle = null;
+    }
+    render();
+  }, (error) => {
+    state.online.message = `オンライン同期に失敗しました。${error?.message || ""}`;
+    render();
+  });
+}
+
+function leaveOnlineRoomSilently() {
+  if (typeof state.online.unsubscribe === "function") {
+    state.online.unsubscribe();
+  }
+  state.online.unsubscribe = null;
+}
+
+function leaveOnlineRoom() {
+  leaveOnlineRoomSilently();
+  state.online.roomId = "";
+  state.online.playerIndex = null;
+  state.online.room = null;
+  state.online.message = "部屋から退出しました。";
+  if (isOnlineBattle(state.battle)) state.battle = null;
+  state.screen = "online";
+  render();
+}
+
+async function startOnlineBattle() {
+  if (!ensureOnlineReady() || state.online.busy) return;
+  const room = state.online.room;
+  const players = getOnlineRoomPlayers(room);
+  if (!players[0]?.uid || !players[1]?.uid) {
+    state.online.message = "2人そろうと開始できます。";
+    render();
+    return;
+  }
+  state.online.busy = true;
+  state.online.message = "オンラインバトルを開始しています...";
+  render();
+
+  try {
+    const battle = createOnlineBattle(room);
+    state.battle = battle;
+    state.screen = "battle";
+    await saveOnlineBattle(battle, "battle");
+    render();
+  } catch (error) {
+    state.online.message = `バトル開始に失敗しました。${error?.message || ""}`;
+    render();
+  } finally {
+    state.online.busy = false;
+  }
+}
+
+function createOnlineBattle(room) {
+  const players = getOnlineRoomPlayers(room);
+  applyOnlineRoomCustomCards(room);
+  const deck1 = shuffle([...(players[0].deckIds || [])]);
+  const deck2 = shuffle([...(players[1].deckIds || [])]);
+  const battle = {
+    mode: "online",
+    roomId: room.roomId || state.online.roomId,
+    phase: "roulette",
+    firstPlayer: null,
+    activePlayer: null,
+    nextActivePlayer: null,
+    aiPlayer: null,
+    aiScheduled: false,
+    aiThinking: false,
+    turnNumber: 0,
+    pendingAttackerUid: null,
+    winner: null,
+    initialDeckSize: Math.max(deck1.length, deck2.length),
+    players: [
+      createPlayer(players[0].name || "P1", deck1),
+      createPlayer(players[1].name || "P2", deck2)
+    ],
+    log: ["オンライン対戦を開始しました。"]
+  };
+  drawCards(battle, 0, INITIAL_HAND, false);
+  drawCards(battle, 1, INITIAL_HAND, false);
+  return battle;
+}
+
+function serializeOnlineBattle(battle) {
+  const serialized = JSON.parse(JSON.stringify({
+    ...battle,
+    aiScheduled: false,
+    aiThinking: false
+  }));
+  if (Array.isArray(serialized.log) && serialized.log.length > 120) {
+    serialized.log = serialized.log.slice(-120);
+  }
+  return serialized;
+}
+
+async function saveOnlineBattle(battle = state.battle, status = null) {
+  if (!isOnlineBattle(battle) || !state.online.roomId || !cloudApi) return;
+  const roomRef = getOnlineRoomRef(state.online.roomId);
+  const battleStatus = status || (battle.phase === "over" ? "over" : "battle");
+  await cloudApi.setDoc(roomRef, {
+    status: battleStatus,
+    battle: serializeOnlineBattle(battle),
+    updatedAt: cloudApi.serverTimestamp()
+  }, { merge: true });
+}
+
+async function resetOnlineRoomBattle() {
+  if (!state.online.roomId || !cloudApi) {
+    state.screen = "online";
+    render();
+    return;
+  }
+  try {
+    const players = getOnlineRoomPlayers(state.online.room);
+    const nextStatus = players[0]?.uid && players[1]?.uid ? "ready" : "waiting";
+    await cloudApi.setDoc(getOnlineRoomRef(state.online.roomId), {
+      status: nextStatus,
+      battle: null,
+      updatedAt: cloudApi.serverTimestamp()
+    }, { merge: true });
+    state.battle = null;
+    state.screen = "online";
+    state.online.message = "部屋を再戦待ちに戻しました。";
+    render();
+  } catch (error) {
+    state.online.message = `部屋のリセットに失敗しました。${error?.message || ""}`;
+    state.screen = "online";
+    render();
+  }
+}
+
+function syncOnlineBattle() {
+  if (!isOnlineBattle(state.battle)) return;
+  saveOnlineBattle(state.battle).catch((error) => {
+    state.online.message = `オンライン保存に失敗しました。${error?.message || ""}`;
+    render();
+  });
+}
+
 function renderOnlinePlaceholder() {
+  const user = state.cloud.user;
+  const room = state.online.room;
+  const players = getOnlineRoomPlayers(room);
+  const roomId = state.online.roomId || state.online.inputRoomId;
+  const signedIn = Boolean(user);
+
+  if (!state.cloud.configured) {
+    return `
+      <section class="stack">
+        <div class="band">
+          <div class="section-title">
+            <div>
+              <h2>オンライン対戦</h2>
+              <p>オンライン対戦にはFirebase設定とGoogleログインが必要です。</p>
+            </div>
+          </div>
+          <div class="notice">${escapeHtml(state.cloud.message || "Firebase設定を確認してください。")}</div>
+        </div>
+      </section>
+    `;
+  }
+
+  if (!signedIn) {
+    return `
+      <section class="stack">
+        <div class="band">
+          <div class="section-title">
+            <div>
+              <h2>オンライン対戦</h2>
+              <p>Googleでログインしてから、部屋を作成または参加します。</p>
+            </div>
+          </div>
+          <button class="primary" data-action="cloud-login">Googleでログイン</button>
+          <div class="notice">${escapeHtml(state.cloud.message || "ログインするとオンライン対戦を使えます。")}</div>
+        </div>
+      </section>
+    `;
+  }
+
+  if (room) {
+    const canStart = players[0]?.uid && players[1]?.uid && !room.battle;
+    return `
+      <section class="stack">
+        <div class="band">
+          <div class="section-title">
+            <div>
+              <h2>オンライン対戦</h2>
+              <p>部屋IDを相手に伝えて参加してもらってください。</p>
+            </div>
+            <div class="toolbar">
+              <span class="pill aqua strong">部屋ID ${escapeHtml(roomId)}</span>
+              <button data-action="leave-online-room">退室</button>
+            </div>
+          </div>
+          ${state.online.message ? `<div class="notice">${escapeHtml(state.online.message)}</div>` : ""}
+        </div>
+        <div class="split">
+          ${[0, 1].map((index) => `
+            <div class="band">
+              <h3>${index === 0 ? "プレイヤー1" : "プレイヤー2"}</h3>
+              ${players[index]?.uid ? `
+                <div class="player-top">
+                  <strong>${escapeHtml(players[index].name || `P${index + 1}`)}</strong>
+                  <span class="pill ${state.online.playerIndex === index ? "pink strong" : ""}">${state.online.playerIndex === index ? "あなた" : "参加中"}</span>
+                </div>
+                <p class="muted">山札 ${players[index].deckCount || 0}枚</p>
+              ` : `<div class="empty-field">参加待ち</div>`}
+            </div>
+          `).join("")}
+        </div>
+        <div class="band stack">
+          ${room.battle ? `
+            <button class="primary" data-action="screen" data-screen="battle">対戦画面へ戻る</button>
+          ` : `
+            <button class="primary" data-action="start-online-battle" ${canStart ? "" : "disabled"}>オンラインバトル開始</button>
+            <div class="notice">2人そろったら開始できます。開始後に先攻・後攻ルーレットへ進みます。</div>
+          `}
+        </div>
+      </section>
+    `;
+  }
+
   return `
     <section class="stack">
       <div class="band">
         <div class="section-title">
           <div>
             <h2>オンライン対戦</h2>
-            <p>第3段階でFirebase Firestoreを接続するための画面枠です。</p>
+            <p>Googleログイン済みのプレイヤー同士で、部屋IDを使って対戦します。</p>
           </div>
-        </div>
-        <div class="notice">
-          予定機能：部屋作成、4〜6文字の部屋ID発行、部屋ID参加、公開状態と手札・山札の非公開データ分離、ターン同期、勝敗同期。
+          <div class="toolbar">
+            <span class="pill pink strong">${escapeHtml(user.displayName || user.email || "ログイン中")}</span>
+          </div>
         </div>
       </div>
       <div class="split">
         <div class="band stack">
           <h3>部屋を作る</h3>
-          <button class="primary" disabled>Firebase接続後に有効化</button>
+          <p class="muted">今の山札を使って部屋を作ります。相手には部屋IDを伝えてください。</p>
+          <button class="primary" data-action="create-online-room" ${state.online.busy ? "disabled" : ""}>部屋を作る</button>
         </div>
         <div class="band stack">
           <h3>部屋IDで参加</h3>
-          <input value="" placeholder="例：A7K2" disabled>
-          <button disabled>参加</button>
+          <input data-field="onlineRoomId" value="${escapeAttr(state.online.inputRoomId)}" placeholder="例：A7K2" maxlength="6" autocomplete="off">
+          <button class="accent" data-action="join-online-room" ${state.online.busy || !state.online.inputRoomId ? "disabled" : ""}>参加</button>
         </div>
       </div>
       <div class="band">
-        <h3>保存予定パス</h3>
-        <p class="notice">rooms/{roomId}/public/state と rooms/{roomId}/private/{playerId}/hand・deck に分離します。</p>
+        <h3>現在の注意</h3>
+        <p class="notice">この版はまず遊べる同期を優先したMVPです。画面上は相手の手札を隠しますが、厳密な不正対策用の完全非公開データ分離は次の段階で強化できます。</p>
+        ${state.online.message ? `<div class="notice">${escapeHtml(state.online.message)}</div>` : ""}
       </div>
     </section>
   `;
@@ -1869,7 +2370,7 @@ function getHandDetailContext() {
     if (!handCard) continue;
     const card = getCard(handCard.cardId);
     if (!card) return null;
-    const actionsEnabled = isBattleActive() && !isAiTurn(battle) && playerIndex === battle.activePlayer;
+    const actionsEnabled = isBattleActive() && !isAiTurn(battle) && canControlBattle(battle) && playerIndex === battle.activePlayer;
     const canPay = actionsEnabled && player.currentCost >= card.cost;
     const fieldFull = card.type === "character" && player.field.length >= FIELD_LIMIT;
     return {
@@ -1925,7 +2426,11 @@ function showCardDetail(cardId) {
 function showHandCardDetail(uid) {
   const battle = state.battle;
   if (!battle || !uid) return;
-  const handCard = battle.players.flatMap((player) => player.hand).find((entry) => entry.uid === uid);
+  const players = isOnlineBattle(battle) ? [battle.players[getOnlinePlayerIndex()]] : battle.players;
+  const handCard = players
+    .filter(Boolean)
+    .flatMap((player) => player.hand)
+    .find((entry) => entry.uid === uid);
   if (!handCard || !getCard(handCard.cardId)) return;
   state.cardDetailId = handCard.cardId;
   state.cardDetailHandUid = uid;
@@ -1945,6 +2450,9 @@ function getSortedHand(hand) {
 }
 
 function renderBattleBoard(battle) {
+  if (isOnlineBattle(battle)) {
+    return renderOnlineBattleBoard(battle);
+  }
   if (isCpuBattleMode(battle.mode)) {
     return renderAiBattleBoard(battle);
   }
@@ -1987,6 +2495,59 @@ function renderBattleBoard(battle) {
           </div>
           <div class="card-back-row">
             ${inactive.hand.map(() => `<div class="card-back" aria-hidden="true"></div>`).join("") || `<div class="empty-field">0枚</div>`}
+          </div>
+          ${renderLog(battle)}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderOnlineBattleBoard(battle) {
+  const localIndex = getOnlinePlayerIndex();
+  const safeLocalIndex = Number.isInteger(localIndex) ? localIndex : 0;
+  const opponentIndex = 1 - safeLocalIndex;
+  const local = battle.players[safeLocalIndex];
+  const opponent = battle.players[opponentIndex];
+  const isMyTurn = battle.activePlayer === safeLocalIndex;
+  return `
+    <section class="battle-layout">
+      ${renderScoreboard(battle)}
+      <div class="band battle-actions">
+        <span class="pill aqua strong">部屋ID ${escapeHtml(battle.roomId || state.online.roomId || "")}</span>
+        <span class="pill ${isMyTurn ? "pink strong" : "aqua"}">${isMyTurn ? "あなたのターン" : `${escapeHtml(battle.players[battle.activePlayer]?.name || "相手")}のターン`}</span>
+        <span class="pill aqua">ターン ${battle.turnNumber}</span>
+        <span class="pill mint">倍率 ${formatMultiplier(levelMultiplier(local.level))}</span>
+        ${battle.pendingAttackerUid && isMyTurn ? `<button data-action="cancel-attack">攻撃選択を解除</button>` : ""}
+        ${isMyTurn ? `<button class="accent" data-action="end-turn">ターンエンド</button>` : `<span class="pill">相手の操作待ち</span>`}
+        <button class="danger" data-action="surrender">降参</button>
+      </div>
+      <div class="board">
+        ${renderFieldZone(battle, opponentIndex)}
+        ${renderFieldZone(battle, safeLocalIndex)}
+      </div>
+      <div class="split">
+        <div class="band hand-zone active-hand-zone">
+          <div class="section-title">
+            <div>
+              <h3>あなたの手札</h3>
+              <p>${isMyTurn ? "カードを選んで、召喚・使用・墓地送りを選べます。" : "相手のターン中は操作できません。"}</p>
+            </div>
+            ${renderHandSortControls()}
+          </div>
+          <div class="hand-grid">
+            ${local.hand.length ? getSortedHand(local.hand).map((handCard) => renderHandCard(handCard, local, isMyTurn)).join("") : `<div class="empty-field">手札がありません</div>`}
+          </div>
+        </div>
+        <div class="band hand-zone hidden-hand-zone">
+          <div class="section-title">
+            <div>
+              <h3>${escapeHtml(opponent.name)}の手札</h3>
+              <p>相手の手札は枚数だけ表示します。</p>
+            </div>
+          </div>
+          <div class="card-back-row">
+            ${opponent.hand.map(() => `<div class="card-back" aria-hidden="true"></div>`).join("") || `<div class="empty-field">0枚</div>`}
           </div>
           ${renderLog(battle)}
         </div>
@@ -2087,7 +2648,8 @@ function renderFieldZone(battle, ownerIndex) {
   const owner = battle.players[ownerIndex];
   const isActiveOwner = ownerIndex === battle.activePlayer;
   const opponentIndex = 1 - battle.activePlayer;
-  const canDirect = !isAiTurn(battle) && battle.pendingAttackerUid && ownerIndex === opponentIndex && owner.field.length === 0;
+  const canAct = canControlBattle(battle);
+  const canDirect = canAct && !isAiTurn(battle) && battle.pendingAttackerUid && ownerIndex === opponentIndex && owner.field.length === 0;
   return `
     <div class="field-zone">
       <div class="field-title">
@@ -2109,8 +2671,9 @@ function renderFieldCard(unit, owner, isActiveOwner, ownerIndex) {
   const card = getCard(unit.cardId);
   const stats = getEffectiveStats(unit, owner);
   const pending = battle.pendingAttackerUid;
-  const canSelect = !isAiTurn(battle) && isActiveOwner && unit.canAttack && !pending;
-  const canTarget = !isAiTurn(battle) && pending && ownerIndex !== battle.activePlayer;
+  const canAct = canControlBattle(battle);
+  const canSelect = canAct && !isAiTurn(battle) && isActiveOwner && unit.canAttack && !pending;
+  const canTarget = canAct && !isAiTurn(battle) && pending && ownerIndex !== battle.activePlayer;
   const classes = [
     "field-card",
     canSelect ? "selectable" : "",
@@ -2217,6 +2780,50 @@ function normalizeCardAttribute(attribute) {
 function cardAttributeLabel(attribute) {
   const normalized = normalizeCardAttribute(attribute);
   return CARD_ATTRIBUTES.find((entry) => entry.id === normalized)?.label || "無";
+}
+
+function cardAttributeAdvantageTarget(attribute) {
+  return ATTRIBUTE_ADVANTAGE[normalizeCardAttribute(attribute)] || null;
+}
+
+function cardAttributeWeaknessTarget(attribute) {
+  const normalized = normalizeCardAttribute(attribute);
+  return Object.entries(ATTRIBUTE_ADVANTAGE).find(([, target]) => target === normalized)?.[0] || null;
+}
+
+function cardAttributeRelationText(attribute) {
+  const strongTarget = cardAttributeAdvantageTarget(attribute);
+  const weakTarget = cardAttributeWeaknessTarget(attribute);
+  if (!strongTarget && !weakTarget) return "";
+  const strongText = strongTarget ? `${cardAttributeLabel(strongTarget)}に有利` : "有利なし";
+  const weakText = weakTarget ? `${cardAttributeLabel(weakTarget)}に不利` : "不利なし";
+  return `属性相性: ${strongText} / ${weakText}`;
+}
+
+function getAttributeDamageMultiplier(attackerCard, defenderCard) {
+  const attackerAttribute = normalizeCardAttribute(attackerCard?.attribute);
+  const defenderAttribute = normalizeCardAttribute(defenderCard?.attribute);
+  if (attackerAttribute === "neutral" || defenderAttribute === "neutral" || attackerAttribute === defenderAttribute) {
+    return 1;
+  }
+  if (ATTRIBUTE_ADVANTAGE[attackerAttribute] === defenderAttribute) {
+    return ATTRIBUTE_ADVANTAGE_MULTIPLIER;
+  }
+  if (ATTRIBUTE_ADVANTAGE[defenderAttribute] === attackerAttribute) {
+    return ATTRIBUTE_DISADVANTAGE_MULTIPLIER;
+  }
+  return 1;
+}
+
+function getAttributeBattleDamage(baseDamage, attackerCard, defenderCard) {
+  return Math.max(0, Math.ceil(baseDamage * getAttributeDamageMultiplier(attackerCard, defenderCard)));
+}
+
+function attributeMatchupShortText(attackerCard, defenderCard) {
+  const multiplier = getAttributeDamageMultiplier(attackerCard, defenderCard);
+  if (multiplier > 1) return `属性有利 ${formatMultiplier(multiplier)}`;
+  if (multiplier < 1) return `属性不利 ${formatMultiplier(multiplier)}`;
+  return "属性等倍";
 }
 
 function renderMiniCardHeader(card) {
@@ -2412,6 +3019,8 @@ function cardEffectText(card) {
   const effects = [];
   if (card.abilities?.includes("block")) effects.push("ブロック");
   if (card.characterEffect) effects.push(characterEffectText(card.characterEffect));
+  const attributeRelation = cardAttributeRelationText(card.attribute);
+  if (attributeRelation) effects.push(attributeRelation);
   return effects.length ? effects.join(" / ") : "効果なし";
 }
 
@@ -2704,6 +3313,7 @@ function spinRoulette() {
     battle.phase = "battle";
     startTurn(battle, battle.firstPlayer);
     render();
+    syncOnlineBattle();
     maybeScheduleAiTurn();
     return;
   }
@@ -2712,6 +3322,7 @@ function spinRoulette() {
   battle.log.push(`${battle.players[battle.firstPlayer].name}が先攻に決まりました。`);
   setFx("battle", "先攻決定", `${battle.players[battle.firstPlayer].name}が先攻`);
   render();
+  syncOnlineBattle();
 }
 
 function readyNextTurn() {
@@ -2745,9 +3356,19 @@ function endTurn() {
   const battle = state.battle;
   if (!isBattleActive()) return;
   if (isAiTurn(battle)) return;
+  if (!canControlBattle(battle)) {
+    showToast("相手のターンです。");
+    return;
+  }
   battle.pendingAttackerUid = null;
   battle.nextActivePlayer = 1 - battle.activePlayer;
   battle.log.push(`${battle.players[battle.activePlayer].name}がターンエンドしました。`);
+  if (isOnlineBattle(battle)) {
+    startTurn(battle, battle.nextActivePlayer);
+    render();
+    syncOnlineBattle();
+    return;
+  }
   if (isCpuBattleMode(battle.mode)) {
     startTurn(battle, battle.nextActivePlayer);
     render();
@@ -2762,6 +3383,10 @@ function playHandCard(uid) {
   const battle = state.battle;
   if (!isBattleActive()) return;
   if (isAiTurn(battle)) return;
+  if (!canControlBattle(battle)) {
+    showToast("相手のターンです。");
+    return;
+  }
   const player = battle.players[battle.activePlayer];
   const handIndex = player.hand.findIndex((card) => card.uid === uid);
   if (handIndex === -1) return;
@@ -2802,12 +3427,17 @@ function playHandCard(uid) {
   state.cardDetailHandUid = null;
   checkBattleEnd(battle);
   render();
+  syncOnlineBattle();
 }
 
 function sendHandCardToGrave(uid) {
   const battle = state.battle;
   if (!isBattleActive()) return;
   if (isAiTurn(battle)) return;
+  if (!canControlBattle(battle)) {
+    showToast("相手のターンです。");
+    return;
+  }
   const player = battle.players[battle.activePlayer];
   const handIndex = player.hand.findIndex((card) => card.uid === uid);
   if (handIndex === -1) return;
@@ -2825,6 +3455,7 @@ function sendHandCardToGrave(uid) {
   state.cardDetailId = null;
   state.cardDetailHandUid = null;
   render();
+  syncOnlineBattle();
 }
 
 function startHandGraveChoice(battle, player, count, sourceName) {
@@ -2879,6 +3510,12 @@ function confirmGraveChoice() {
   const choice = state.graveChoice;
   const battle = state.battle;
   if (!choice || !battle) return;
+  if (isOnlineBattle(battle) && choice.playerIndex !== getOnlinePlayerIndex()) {
+    state.graveChoice = null;
+    showToast("相手の手札は操作できません。");
+    render();
+    return;
+  }
   const player = battle.players[choice.playerIndex];
   state.graveChoice = null;
   if (!player) {
@@ -2888,6 +3525,7 @@ function confirmGraveChoice() {
   sendHandCardsToGraveByUid(battle, player, choice.selectedUids || [], choice.sourceName);
   checkBattleEnd(battle);
   render();
+  syncOnlineBattle();
 }
 
 function cancelGraveChoice() {
@@ -2923,18 +3561,27 @@ function selectAttacker(uid) {
   const battle = state.battle;
   if (!isBattleActive()) return;
   if (isAiTurn(battle)) return;
+  if (!canControlBattle(battle)) {
+    showToast("相手のターンです。");
+    return;
+  }
   const player = battle.players[battle.activePlayer];
   const unit = player.field.find((fieldUnit) => fieldUnit.uid === uid);
   if (!unit || !unit.canAttack) return;
   battle.pendingAttackerUid = uid;
   battle.log.push(`${player.name}が${getCard(unit.cardId).name}で攻撃対象を選んでいます。`);
   render();
+  syncOnlineBattle();
 }
 
 function attackCard(targetUid) {
   const battle = state.battle;
   if (!isBattleActive() || !battle.pendingAttackerUid) return;
   if (isAiTurn(battle)) return;
+  if (!canControlBattle(battle)) {
+    showToast("相手のターンです。");
+    return;
+  }
   const attackerPlayer = battle.players[battle.activePlayer];
   const defenderPlayer = battle.players[1 - battle.activePlayer];
   const attacker = attackerPlayer.field.find((unit) => unit.uid === battle.pendingAttackerUid);
@@ -2953,24 +3600,31 @@ function attackCard(targetUid) {
   const targetCard = getCard(target.cardId);
   const atkStats = getEffectiveStats(attacker, attackerPlayer);
   const defStats = getEffectiveStats(target, defenderPlayer);
+  const attackDamage = getAttributeBattleDamage(atkStats.atk, attackerCard, targetCard);
+  const counterDamage = getAttributeBattleDamage(defStats.atk, targetCard, attackerCard);
 
-  damageUnit(target, defenderPlayer, atkStats.atk);
-  damageUnit(attacker, attackerPlayer, defStats.atk);
+  damageUnit(target, defenderPlayer, attackDamage);
+  damageUnit(attacker, attackerPlayer, counterDamage);
   attacker.canAttack = false;
   battle.pendingAttackerUid = null;
 
-  battle.log.push(`${attackerPlayer.name}の${attackerCard.name}が${targetCard.name}を攻撃しました。双方が反撃ダメージを受けました。`);
+  battle.log.push(`${attackerPlayer.name}の${attackerCard.name}が${targetCard.name}を攻撃しました。${targetCard.name}へ${attackDamage}ダメージ（${attributeMatchupShortText(attackerCard, targetCard)}）、反撃で${counterDamage}ダメージ（${attributeMatchupShortText(targetCard, attackerCard)}）。`);
   resolveCharacterEffect(battle, attackerPlayer, defenderPlayer, attackerCard, "attack", attacker, atkStats.atk);
   destroyDefeatedUnits(battle, attackerPlayer, defenderPlayer);
-  setFx("attack", "攻撃", `${attackerCard.name} → ${targetCard.name}`, attackerCard.rarity || "N");
+  setFx("attack", "攻撃", `${attackerCard.name} → ${targetCard.name} / ${attributeMatchupShortText(attackerCard, targetCard)}`, attackerCard.rarity || "N");
   checkBattleEnd(battle);
   render();
+  syncOnlineBattle();
 }
 
 function attackPlayer() {
   const battle = state.battle;
   if (!isBattleActive() || !battle.pendingAttackerUid) return;
   if (isAiTurn(battle)) return;
+  if (!canControlBattle(battle)) {
+    showToast("相手のターンです。");
+    return;
+  }
   const attackerPlayer = battle.players[battle.activePlayer];
   const defenderPlayer = battle.players[1 - battle.activePlayer];
   if (defenderPlayer.field.length > 0) {
@@ -2989,11 +3643,23 @@ function attackPlayer() {
   setFx("attack", "直接攻撃", `${card.name} / ${damage}ダメージ`, card.rarity || "N");
   checkBattleEnd(battle);
   render();
+  syncOnlineBattle();
 }
 
 function surrender() {
   const battle = state.battle;
   if (!isBattleActive()) return;
+  if (isOnlineBattle(battle)) {
+    const playerIndex = getOnlinePlayerIndex();
+    if (!Number.isInteger(playerIndex)) return;
+    battle.winner = 1 - playerIndex;
+    battle.phase = "over";
+    battle.pendingAttackerUid = null;
+    battle.log.push(`${battle.players[playerIndex].name}が降参しました。`);
+    render();
+    syncOnlineBattle();
+    return;
+  }
   if (isCpuBattleMode(battle.mode)) {
     battle.winner = battle.aiPlayer;
     battle.phase = "over";
@@ -3292,13 +3958,19 @@ function chooseAiAttackTarget(battle, attacker) {
   if (blockers.length) return blockers[0];
 
   const ai = battle.players[battle.aiPlayer];
+  const attackerCard = getCard(attacker.cardId);
   const attackerAtk = getEffectiveStats(attacker, ai).atk;
   return [...human.field].sort((a, b) => {
+    const aCard = getCard(a.cardId);
+    const bCard = getCard(b.cardId);
     const aStats = getEffectiveStats(a, human);
     const bStats = getEffectiveStats(b, human);
-    const aKillable = attackerAtk >= aStats.def ? 1 : 0;
-    const bKillable = attackerAtk >= bStats.def ? 1 : 0;
+    const aDamage = getAttributeBattleDamage(attackerAtk, attackerCard, aCard);
+    const bDamage = getAttributeBattleDamage(attackerAtk, attackerCard, bCard);
+    const aKillable = aDamage >= aStats.def ? 1 : 0;
+    const bKillable = bDamage >= bStats.def ? 1 : 0;
     if (aKillable !== bKillable) return bKillable - aKillable;
+    if (aDamage !== bDamage) return bDamage - aDamage;
     if (aStats.atk !== bStats.atk) return bStats.atk - aStats.atk;
     return aStats.def - bStats.def;
   })[0];
@@ -3320,13 +3992,15 @@ function aiAttackCard(battle, attacker, target) {
   const targetCard = getCard(actualTarget.cardId);
   const atkStats = getEffectiveStats(attacker, ai);
   const defStats = getEffectiveStats(actualTarget, human);
-  damageUnit(actualTarget, human, atkStats.atk);
-  damageUnit(attacker, ai, defStats.atk);
+  const attackDamage = getAttributeBattleDamage(atkStats.atk, attackerCard, targetCard);
+  const counterDamage = getAttributeBattleDamage(defStats.atk, targetCard, attackerCard);
+  damageUnit(actualTarget, human, attackDamage);
+  damageUnit(attacker, ai, counterDamage);
   attacker.canAttack = false;
-  battle.log.push(`AIの${attackerCard.name}が${targetCard.name}を攻撃しました。`);
+  battle.log.push(`AIの${attackerCard.name}が${targetCard.name}を攻撃しました。${targetCard.name}へ${attackDamage}ダメージ（${attributeMatchupShortText(attackerCard, targetCard)}）、反撃で${counterDamage}ダメージ（${attributeMatchupShortText(targetCard, attackerCard)}）。`);
   resolveCharacterEffect(battle, ai, human, attackerCard, "attack", attacker, atkStats.atk);
   destroyDefeatedUnits(battle, ai, human);
-  setFx("attack", "AI攻撃", `${attackerCard.name} → ${targetCard.name}`, attackerCard.rarity || "N");
+  setFx("attack", "AI攻撃", `${attackerCard.name} → ${targetCard.name} / ${attributeMatchupShortText(attackerCard, targetCard)}`, attackerCard.rarity || "N");
   checkBattleEnd(battle);
 }
 
@@ -3983,6 +4657,7 @@ async function initCloudSave() {
       getDoc: firestoreModule.getDoc,
       getDocFromServer: firestoreModule.getDocFromServer,
       enableNetwork: firestoreModule.enableNetwork,
+      onSnapshot: firestoreModule.onSnapshot,
       setDoc: firestoreModule.setDoc,
       serverTimestamp: firestoreModule.serverTimestamp,
       signInWithPopup: authModule.signInWithPopup,
@@ -4018,6 +4693,10 @@ function isFirebaseConfigReady(config) {
 
 async function handleCloudAuthState(user) {
   if (!user) {
+    leaveOnlineRoomSilently();
+    state.online.roomId = "";
+    state.online.playerIndex = null;
+    state.online.room = null;
     state.cloud.user = null;
     state.cloud.remoteData = null;
     state.cloud.needsChoice = false;
