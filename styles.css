@@ -182,6 +182,92 @@ label {
   color: #2497c6;
 }
 
+.player-name-editor {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.player-name-editor span {
+  font-weight: 800;
+}
+
+.player-name-editor small {
+  color: var(--muted);
+}
+
+.mission-grid,
+.upgrade-list {
+  display: grid;
+  gap: 10px;
+}
+
+.mission-card {
+  display: grid;
+  gap: 10px;
+}
+
+.mission-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.mission-top h3,
+.mission-top p {
+  margin: 0;
+}
+
+.mission-top p {
+  color: var(--muted);
+}
+
+.mission-bar,
+.upgrade-meter div {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(219, 229, 238, 0.9);
+}
+
+.mission-bar div,
+.upgrade-meter i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ff8fc4, #75d8f4);
+}
+
+.upgrade-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(190px, 0.8fr) minmax(170px, auto);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow);
+}
+
+.upgrade-status,
+.upgrade-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.upgrade-status small,
+.upgrade-actions small {
+  color: var(--muted);
+}
+
+.upgrade-meter {
+  display: grid;
+  gap: 5px;
+  font-weight: 800;
+}
+
 .band {
   padding: 16px;
   border: 1px solid var(--line);
@@ -1812,8 +1898,7 @@ label {
 }
 
 .tutorial-steps,
-.tutorial-tip-list,
-.matchup-grid {
+.tutorial-tip-list {
   display: grid;
   gap: 10px;
 }
@@ -1825,8 +1910,7 @@ label {
   gap: 10px;
 }
 
-.tutorial-tip-list div,
-.matchup-row {
+.tutorial-tip-list div {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1837,18 +1921,9 @@ label {
   background: rgba(255, 255, 255, 0.72);
 }
 
-.tutorial-tip-list span,
-.matchup-row span {
+.tutorial-tip-list span {
   color: var(--muted);
   line-height: 1.5;
-}
-
-.matchup-row strong {
-  min-width: 44px;
-}
-
-.matchup-row.neutral {
-  background: rgba(246, 247, 251, 0.88);
 }
 
 .tutorial-finish {
@@ -2016,6 +2091,53 @@ label {
   min-height: 0;
 }
 
+.auction-dashboard {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 10px 0 12px;
+}
+
+.auction-dashboard-column {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.auction-dashboard-column h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.auction-compact-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(246, 247, 251, 0.9);
+}
+
+.auction-compact-row strong,
+.auction-compact-row small {
+  display: block;
+}
+
+.auction-compact-row small {
+  color: var(--muted);
+}
+
+.auction-compact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
 .market-price-row,
 .market-sell-action {
   display: flex;
@@ -2023,6 +2145,39 @@ label {
   gap: 8px;
   align-items: center;
   justify-content: space-between;
+}
+
+.market-auction-action {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) auto;
+  gap: 8px;
+  width: 100%;
+}
+
+.market-auction-action input {
+  min-width: 0;
+}
+
+.auction-info {
+  display: grid;
+  gap: 4px;
+  padding: 8px;
+  border-radius: var(--radius);
+  background: rgba(246, 247, 251, 0.86);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.auction-bid-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.auction-bid-row input {
+  min-width: 0;
 }
 
 .market-note {
@@ -2582,8 +2737,7 @@ label {
   }
 
   .tutorial-step,
-  .tutorial-tip-list div,
-  .matchup-row {
+  .tutorial-tip-list div {
     display: grid;
     grid-template-columns: 1fr;
     align-items: start;
@@ -2856,12 +3010,52 @@ label {
     grid-template-columns: 1fr;
   }
 
+  .auction-dashboard {
+    grid-template-columns: 1fr;
+  }
+
+  .mission-top {
+    display: grid;
+  }
+
+  .upgrade-row {
+    grid-template-columns: 1fr;
+  }
+
+  .upgrade-actions button {
+    width: 100%;
+  }
+
+  .auction-compact-row {
+    grid-template-columns: 1fr;
+  }
+
+  .auction-compact-actions {
+    justify-content: stretch;
+  }
+
+  .auction-compact-actions button {
+    width: 100%;
+  }
+
   .market-sell-row {
     grid-template-columns: 1fr;
   }
 
   .market-sell-action {
     justify-content: stretch;
+  }
+
+  .market-auction-action {
+    grid-template-columns: 1fr;
+  }
+
+  .auction-bid-row {
+    grid-template-columns: 1fr;
+  }
+
+  .auction-bid-row button {
+    width: 100%;
   }
 
   .market-sell-action button {

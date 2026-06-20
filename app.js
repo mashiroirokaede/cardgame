@@ -3,6 +3,11 @@
 const STORAGE_KEYS = {
   customCards: "levelLink.customCards.v2",
   deck: "levelLink.deck.v2",
+  decks: "levelLink.decks.v1",
+  activeDeckId: "levelLink.activeDeckId.v1",
+  playerName: "levelLink.playerName.v1",
+  dailyMissions: "levelLink.dailyMissions.v1",
+  cardUpgrades: "levelLink.cardUpgrades.v1",
   inventory: "levelLink.inventory.v1",
   creatorTickets: "levelLink.creatorTickets.v1",
   gachaHistory: "levelLink.gachaHistory.v1",
@@ -12,6 +17,7 @@ const STORAGE_KEYS = {
   marketPurchases: "levelLink.marketPurchases.v1",
   lastDailyReward: "levelLink.lastDailyReward.v1",
   aiBattle: "levelLink.aiBattle.v1",
+  autoBattle: "levelLink.autoBattle.v1",
   cloudEnabled: "levelLink.cloudEnabled.v1",
   tutorialSeen: "levelLink.tutorialSeen.v1"
 };
@@ -37,6 +43,12 @@ const QUEST_STAGES_PER_AREA = 10;
 const QUEST_FIRST_CLEAR_GACHA_BALL_REWARD = 10;
 const MARKET_SHOP_LISTING_COUNT = 6;
 const MARKET_AUCTION_LISTING_COUNT = 5;
+const AUCTION_BASE_DURATION_MS = 6 * 60 * 60 * 1000;
+const AUCTION_EXTENSION_MS = 10 * 60 * 1000;
+const AUCTION_CLAIM_GRACE_MS = 24 * 60 * 60 * 1000;
+const AUCTION_MIN_BID_INCREMENT = 10;
+const CARD_MAX_ENHANCE_LEVEL = 10;
+const CARD_MAX_EVOLUTION = 3;
 const CLOUD_SAVE_VERSION = 1;
 const CLOUD_SAVE_DEBOUNCE_MS = 900;
 const FIREBASE_SDK_VERSION = "10.12.5";
@@ -71,18 +83,6 @@ const CARD_ATTRIBUTES = [
   { id: "neutral", label: "無" }
 ];
 
-const ATTRIBUTE_ADVANTAGE = {
-  sakura: "wind",
-  wind: "water",
-  water: "moon",
-  moon: "memory",
-  memory: "sky",
-  sky: "light",
-  light: "sakura"
-};
-const ATTRIBUTE_ADVANTAGE_MULTIPLIER = 1.3;
-const ATTRIBUTE_DISADVANTAGE_MULTIPLIER = 0.8;
-
 const RARITY_RATES = [
   { rarity: "N", weight: 61 },
   { rarity: "R", weight: 25 },
@@ -90,6 +90,57 @@ const RARITY_RATES = [
   { rarity: "SSR", weight: 3 },
   { rarity: "UR", weight: 1 }
 ];
+
+const DAILY_MISSION_DEFINITIONS = [
+  {
+    id: "login",
+    title: "ログイン",
+    body: "今日ゲームを開く",
+    event: "dailyLogin",
+    target: 1,
+    reward: { gachaBalls: 1, gold: 50 }
+  },
+  {
+    id: "gacha",
+    title: "ガチャ開封",
+    body: "ガチャを1パック以上開封する",
+    event: "gachaPack",
+    target: 1,
+    reward: { gold: 120 }
+  },
+  {
+    id: "ai",
+    title: "AI戦",
+    body: "AI戦を最後まで1回遊ぶ",
+    event: "aiBattleComplete",
+    target: 1,
+    reward: { gachaBalls: 2, gold: 80 }
+  },
+  {
+    id: "quest",
+    title: "クエスト勝利",
+    body: "クエストで1回勝利する",
+    event: "questWin",
+    target: 1,
+    reward: { gachaBalls: 3, gold: 150 }
+  },
+  {
+    id: "upgrade",
+    title: "カード強化",
+    body: "カードを1回強化する",
+    event: "cardUpgrade",
+    target: 1,
+    reward: { creatorTickets: 1, gold: 120 }
+  }
+];
+
+const RARITY_COST_MULTIPLIER = {
+  N: 1,
+  R: 1.35,
+  SR: 2,
+  SSR: 3,
+  UR: 4
+};
 
 const CREATOR_TIERS = [
   {
@@ -680,15 +731,32 @@ const state = {
   creatorTickets: 0,
   gachaBalls: 0,
   gold: 0,
+  dailyMissions: { date: "", progress: {}, claimed: [] },
+  cardUpgrades: {},
   questClears: [],
   marketPurchases: { date: "", shop: [], auction: [] },
   lastDailyReward: "",
   gachaHistory: [],
   gachaResults: [],
   activeGachaSetId: DEFAULT_GACHA_SET_ID,
+  playerName: "",
+  auctions: {
+    docs: {},
+    bidInputs: {},
+    sellInputs: {},
+    feedKey: "",
+    userFeedReady: false,
+    userUnsubscribe: null,
+    unsubscribers: [],
+    busy: false,
+    message: ""
+  },
+  decks: [],
+  activeDeckId: "",
   tutorialSeen: false,
   deckIds: [],
   battleHandSort: "draw",
+  autoBattle: false,
   cardDetailId: null,
   cardDetailHandUid: null,
   graveChoice: null,
@@ -736,6 +804,7 @@ const toast = document.querySelector("#toast");
 let toastTimer = null;
 let fxTimer = null;
 let cloudSaveTimer = null;
+let onlineProfileTimer = null;
 let cloudApi = null;
 
 init();
@@ -747,19 +816,19 @@ function init() {
   state.creatorTickets = readCreatorTickets();
   state.gachaBalls = readGachaBalls();
   state.gold = readGold();
+  state.playerName = readPlayerName();
+  state.dailyMissions = readDailyMissions();
+  state.cardUpgrades = readCardUpgrades();
   state.questClears = readQuestClears();
   state.marketPurchases = readMarketPurchases();
   state.lastDailyReward = readLastDailyReward();
   state.gachaHistory = readGachaHistory();
   state.tutorialSeen = readTutorialSeen();
+  state.autoBattle = readAutoBattle();
   normalizeInventory();
+  initializeDailyMissions();
   grantDailyRewardIfAvailable();
-  state.deckIds = sanitizeDeck(readDeck());
-  if (state.deckIds.length === 0) {
-    state.deckIds = buildDefaultDeck();
-    state.deckIds = sanitizeDeck(state.deckIds);
-    saveDeck();
-  }
+  initializeDecks();
   if (!state.tutorialSeen) {
     state.screen = "tutorial";
   }
@@ -775,6 +844,7 @@ function attachEvents() {
   app.addEventListener("change", handleInput);
   window.addEventListener("beforeunload", syncAiBattleSave);
   window.addEventListener("beforeunload", leaveOnlineRoomSilently);
+  window.addEventListener("beforeunload", unsubscribeAuctionFeed);
 }
 
 function handleClick(event) {
@@ -859,8 +929,43 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "select-deck") {
+    selectDeck(button.dataset.deckId);
+    return;
+  }
+
+  if (action === "create-deck") {
+    createNewDeck();
+    return;
+  }
+
+  if (action === "duplicate-deck") {
+    duplicateActiveDeck();
+    return;
+  }
+
+  if (action === "delete-deck") {
+    deleteActiveDeck();
+    return;
+  }
+
   if (action === "gacha") {
     runGacha(Number(button.dataset.count) || 1);
+    return;
+  }
+
+  if (action === "claim-daily-mission") {
+    claimDailyMission(button.dataset.missionId);
+    return;
+  }
+
+  if (action === "enhance-card") {
+    enhanceCard(button.dataset.cardId);
+    return;
+  }
+
+  if (action === "evolve-card") {
+    evolveCard(button.dataset.cardId);
     return;
   }
 
@@ -882,12 +987,42 @@ function handleClick(event) {
   }
 
   if (action === "buy-auction-card") {
-    buyMarketListing("auction", button.dataset.listingId);
+    placeAuctionBid(button.dataset.listingId);
+    return;
+  }
+
+  if (action === "claim-auction-card") {
+    claimAuctionCard(button.dataset.listingId);
+    return;
+  }
+
+  if (action === "claim-auction-refund") {
+    claimAuctionRefund(button.dataset.listingId);
+    return;
+  }
+
+  if (action === "forfeit-auction-listing") {
+    forfeitAuctionListing(button.dataset.listingId);
     return;
   }
 
   if (action === "sell-card") {
     sellOwnedCard(button.dataset.cardId);
+    return;
+  }
+
+  if (action === "list-auction-card") {
+    createUserAuctionListing(button.dataset.cardId);
+    return;
+  }
+
+  if (action === "cancel-auction-listing") {
+    cancelAuctionListing(button.dataset.listingId);
+    return;
+  }
+
+  if (action === "claim-auction-payout") {
+    claimAuctionPayout(button.dataset.listingId);
     return;
   }
 
@@ -984,6 +1119,14 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "toggle-auto-battle") {
+    saveAutoBattle(!state.autoBattle);
+    showToast(state.autoBattle ? "自動戦闘をONにしました。" : "自動戦闘をOFFにしました。");
+    render();
+    maybeScheduleAutoBattle();
+    return;
+  }
+
   if (action === "play-card") {
     playHandCard(button.dataset.uid);
     return;
@@ -1058,6 +1201,31 @@ function handleInput(event) {
     return;
   }
 
+  if (field === "playerName") {
+    savePlayerName(event.target.value);
+    return;
+  }
+
+  if (field.startsWith("auctionBid:")) {
+    const listingId = field.slice("auctionBid:".length);
+    state.auctions.bidInputs[listingId] = clampInteger(event.target.value, 0, 99999999);
+    render();
+    return;
+  }
+
+  if (field.startsWith("auctionStart:")) {
+    const cardId = field.slice("auctionStart:".length);
+    state.auctions.sellInputs[cardId] = clampInteger(event.target.value, 0, 99999999);
+    render();
+    return;
+  }
+
+  if (field === "activeDeckName") {
+    renameActiveDeck(event.target.value);
+    render();
+    return;
+  }
+
   if (event.target.type === "checkbox") {
     state.creatorDraft[field] = event.target.checked;
   } else if (event.target.type === "number") {
@@ -1100,7 +1268,7 @@ function renderGraveChoiceOverlay() {
   if (!player) return "";
   const selected = new Set(choice.selectedUids || []);
   const selectableCards = player.hand
-    .map((handCard) => ({ handCard, card: getCard(handCard.cardId) }))
+    .map((handCard) => ({ handCard, card: getBattleCard(handCard.cardId, player) }))
     .filter((entry) => entry.card);
   const selectedCost = selectableCards
     .filter((entry) => selected.has(entry.handCard.uid))
@@ -1195,9 +1363,11 @@ function renderTopbar() {
         <button class="ghost" data-action="screen" data-screen="menu">メニュー</button>
         <button class="ghost" data-action="screen" data-screen="tutorial">遊び方</button>
         <button class="ghost" data-action="screen" data-screen="gacha">ガチャ</button>
+        <button class="ghost" data-action="screen" data-screen="missions">ミッション</button>
         <button class="ghost" data-action="screen" data-screen="quest">クエスト</button>
         <button class="ghost" data-action="screen" data-screen="market">ショップ</button>
         <button class="ghost" data-action="screen" data-screen="deck">山札編成</button>
+        <button class="ghost" data-action="screen" data-screen="upgrade">強化</button>
         <button class="ghost" data-action="screen" data-screen="creator">カード作成</button>
         <button class="ghost" data-action="screen" data-screen="cloud">クラウド保存</button>
         <button class="ghost" data-action="screen" data-screen="online">オンライン</button>
@@ -1211,9 +1381,11 @@ function renderTopbar() {
 function renderScreen() {
   if (state.screen === "tutorial") return renderTutorial();
   if (state.screen === "gacha") return renderGacha();
+  if (state.screen === "missions") return renderDailyMissions();
   if (state.screen === "quest") return renderQuest();
   if (state.screen === "market") return renderMarket();
   if (state.screen === "deck") return renderDeckBuilder();
+  if (state.screen === "upgrade") return renderCardUpgrade();
   if (state.screen === "creator") return renderCardCreator();
   if (state.screen === "battle") return renderBattle();
   if (state.screen === "cloud") return renderCloudSave();
@@ -1226,9 +1398,11 @@ function renderMenu() {
     <section class="menu-grid">
       ${renderMenuTile("遊び方", "初めて遊ぶ人向けに、カード入手からバトルの流れまで確認できます。", "？", "tutorial")}
       ${renderMenuTile("ガチャ", "ガチャ玉を使ってカードと創造チケットを入手します。", "召", "gacha")}
+      ${renderMenuTile("デイリーミッション", "毎日のお題を達成してガチャ玉やゴールドを受け取ります。", "日", "missions")}
       ${renderMenuTile("クエスト", "ステージを順番にクリアしてゴールドを集めます。", "冒", "quest")}
       ${renderMenuTile("ショップ・オークション", "ゴールドでカードを買ったり、余ったカードを売却します。", "市", "market")}
       ${renderMenuTile("山札編成", "100〜300枚の山札を所持カードと作成カードから組みます。", "山", "deck")}
+      ${renderMenuTile("カード強化", "余った同名カードとゴールドでカードを強化・進化します。", "強", "upgrade")}
       ${renderMenuTile("カード作成", "ガチャで入手した創造チケットを消費してカードを作ります。", "作", "creator")}
       ${renderMenuTile("クラウド保存", "Googleアカウントでログインして別端末にもデータを引き継ぎます。", "雲", "cloud")}
       <button class="menu-tile" data-action="start-battle">
@@ -1253,16 +1427,17 @@ function renderMenuTile(title, body, icon, screen) {
   `;
 }
 
-function renderTutorial() {
-  const matchupRows = CARD_ATTRIBUTES
-    .filter((attribute) => attribute.id !== "neutral")
-    .map((attribute) => `
-      <div class="matchup-row">
-        <strong>${escapeHtml(attribute.label)}</strong>
-        <span>→ ${escapeHtml(cardAttributeLabel(cardAttributeAdvantageTarget(attribute.id)))}に有利</span>
-      </div>
-    `).join("");
+function renderPlayerNameEditor(helpText = "") {
+  return `
+    <label class="player-name-editor">
+      <span>ゲーム内の名前</span>
+      <input data-field="playerName" maxlength="16" value="${escapeAttr(state.playerName)}" placeholder="${escapeAttr(getPlayerDisplayName())}">
+      ${helpText ? `<small>${escapeHtml(helpText)}</small>` : ""}
+    </label>
+  `;
+}
 
+function renderTutorial() {
   return `
     <section class="stack tutorial-screen">
       <div class="band tutorial-hero">
@@ -1312,20 +1487,21 @@ function renderTutorial() {
             <div><strong>序盤</strong><span>低コストキャラやドローで手札を整えます。</span></div>
             <div><strong>中盤</strong><span>不要なカードを墓地へ送り、レベル倍率を伸ばします。</span></div>
             <div><strong>守り</strong><span>ブロック持ちのキャラは攻撃対象を引き受けます。</span></div>
-            <div><strong>攻め</strong><span>属性有利や吸収キャラを使うと戦闘が有利になります。</span></div>
+            <div><strong>攻め</strong><span>高火力キャラや吸収キャラで相手の場を崩します。</span></div>
           </div>
         </div>
 
         <div class="band stack">
           <div class="section-title">
             <div>
-              <h2>属性相性</h2>
-              <p>キャラ同士の戦闘では、有利なら与えるダメージが${formatMultiplier(ATTRIBUTE_ADVANTAGE_MULTIPLIER)}、不利なら${formatMultiplier(ATTRIBUTE_DISADVANTAGE_MULTIPLIER)}になります。</p>
+              <h2>属性</h2>
+              <p>属性はカードの分類と見た目の個性です。今のルールでは、属性による有利・不利やダメージ倍率はありません。</p>
             </div>
           </div>
-          <div class="matchup-grid">
-            ${matchupRows}
-            <div class="matchup-row neutral"><strong>無</strong><span>相性なし</span></div>
+          <div class="tutorial-tip-list">
+            <div><strong>桜・月・水など</strong><span>カードの雰囲気やイラスト色に使われます。</span></div>
+            <div><strong>戦闘</strong><span>勝敗は攻撃力、防御力、効果、レベル倍率で決まります。</span></div>
+            <div><strong>迷ったら</strong><span>属性より、コストと効果を優先して見れば大丈夫です。</span></div>
           </div>
         </div>
       </div>
@@ -1428,23 +1604,82 @@ function renderQuestStageButton(stage) {
   `;
 }
 
+function renderDailyMissions() {
+  initializeDailyMissions();
+  const completed = DAILY_MISSION_DEFINITIONS.filter((mission) => isDailyMissionComplete(mission)).length;
+  return `
+    <section class="stack">
+      <div class="band">
+        <div class="section-title">
+          <div>
+            <h2>デイリーミッション</h2>
+            <p>毎日0時に更新されます。達成したミッションは報酬を受け取れます。</p>
+          </div>
+          <div class="toolbar">
+            <span class="pill pink strong">${completed}/${DAILY_MISSION_DEFINITIONS.length} 達成</span>
+            <span class="pill mint">${GACHA_BALL_NAME} ${state.gachaBalls}個</span>
+            <span class="pill aqua">${GOLD_NAME} ${state.gold}</span>
+          </div>
+        </div>
+      </div>
+      <div class="mission-grid">
+        ${DAILY_MISSION_DEFINITIONS.map(renderDailyMissionCard).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderDailyMissionCard(mission) {
+  const progress = getDailyMissionProgress(mission.id);
+  const complete = isDailyMissionComplete(mission);
+  const claimed = isDailyMissionClaimed(mission.id);
+  const rate = Math.min(100, Math.round((progress / mission.target) * 100));
+  return `
+    <article class="band mission-card">
+      <div class="mission-top">
+        <div>
+          <h3>${escapeHtml(mission.title)}</h3>
+          <p>${escapeHtml(mission.body)}</p>
+        </div>
+        <span class="pill ${claimed ? "mint" : complete ? "pink strong" : "aqua"}">${claimed ? "受取済み" : complete ? "達成" : `${progress}/${mission.target}`}</span>
+      </div>
+      <div class="mission-bar"><div style="width: ${rate}%"></div></div>
+      <div class="toolbar">
+        ${renderDailyMissionReward(mission.reward)}
+        <button class="primary" data-action="claim-daily-mission" data-mission-id="${escapeAttr(mission.id)}" ${complete && !claimed ? "" : "disabled"}>${claimed ? "受取済み" : "報酬を受け取る"}</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderDailyMissionReward(reward) {
+  const parts = [];
+  if (reward.gachaBalls) parts.push(`${GACHA_BALL_NAME} ${reward.gachaBalls}`);
+  if (reward.gold) parts.push(`${GOLD_NAME} ${reward.gold}`);
+  if (reward.creatorTickets) parts.push(`${CREATOR_TICKET_NAME} ${reward.creatorTickets}`);
+  return `<span class="pill mint strong">報酬 ${escapeHtml(parts.join(" / "))}</span>`;
+}
+
 function renderMarket() {
   const shopListings = getDailyShopListings();
-  const auctionListings = getDailyAuctionListings();
+  const npcAuctionListings = getDailyAuctionListings();
+  const auctionListings = getVisibleAuctionListings(npcAuctionListings);
   const sellableCards = getSellableCards();
+  ensureAuctionFeed(npcAuctionListings);
   return `
     <section class="stack">
       <div class="band">
         <div class="section-title">
           <div>
             <h2>ショップ・オークション</h2>
-            <p>クエストで集めた${GOLD_NAME}を使ってカードを入手します。オークションは現在NPC出品です。</p>
+            <p>クエストで集めた${GOLD_NAME}を使ってカードを入手します。オークションは入札式です。</p>
           </div>
           <div class="toolbar">
             <span class="pill mint strong">${GOLD_NAME} ${state.gold}</span>
-            <span class="pill aqua">毎日入れ替え</span>
+            <span class="pill aqua">ショップは毎日入れ替え</span>
           </div>
         </div>
+        ${state.auctions.message ? `<div class="notice">${escapeHtml(state.auctions.message)}</div>` : ""}
       </div>
 
       <div class="band">
@@ -1463,19 +1698,23 @@ function renderMarket() {
         <div class="section-title">
           <div>
             <h3>カードオークション</h3>
-            <p>NPC出品のカードを落札します。オンライン版ではユーザー同士の出品に置き換えられます。</p>
+            <p>終了時刻までに一番高く入札した人が落札できます。終了10分以内に更新されると、残り時間が10分に戻ります。入札した${GOLD_NAME}はその時点で預かり金になります。</p>
+          </div>
+          <div class="toolbar">
+            ${state.cloud.user ? `<span class="pill aqua">ログイン中</span>` : `<button class="primary" data-action="cloud-login" ${state.cloud.configured ? "" : "disabled"}>Googleログイン</button>`}
           </div>
         </div>
+        ${state.cloud.user ? renderMyAuctionDashboard() : ""}
         <div class="market-grid">
-          ${auctionListings.map((listing) => renderMarketListing(listing, "auction")).join("")}
+          ${auctionListings.length ? auctionListings.map(renderAuctionListing).join("") : `<div class="empty-field">表示できるオークションがありません</div>`}
         </div>
       </div>
 
       <div class="band">
         <div class="section-title">
           <div>
-            <h3>カード売却</h3>
-            <p>山札に入れていない余りカードだけ売却できます。</p>
+            <h3>カード売却・出品</h3>
+            <p>山札に入れていない余りカードだけ売却やユーザーオークション出品ができます。</p>
           </div>
         </div>
         <div class="market-sell-list">
@@ -1483,6 +1722,124 @@ function renderMarket() {
         </div>
       </div>
     </section>
+  `;
+}
+
+function renderAuctionListing(listing) {
+  const card = getCard(listing.cardId);
+  if (!card) return "";
+  const auction = getAuctionDoc(listing);
+  const status = getAuctionStatus(auction);
+  const highestBid = auction.highestBid || 0;
+  const currentPrice = highestBid || auction.startPrice || listing.price;
+  const minimumBid = getMinimumAuctionBid(auction);
+  const inputValue = state.auctions.bidInputs[listing.id] || minimumBid;
+  const isSignedIn = Boolean(state.cloud.user);
+  const isUserAuction = auction.kind === "user";
+  const isSeller = isSignedIn && auction.sellerUid === state.cloud.user.uid;
+  const isHighestBidder = isSignedIn && auction.highestBidderUid === state.cloud.user.uid;
+  const refundAmount = isSignedIn ? getAuctionRefundAmount(auction, state.cloud.user.uid) : 0;
+  const canBid = isSignedIn && status === "active" && inputValue >= minimumBid && state.gold >= inputValue && !isHighestBidder && !isSeller && !state.auctions.busy;
+  const canClaim = isHighestBidder && ["ended", "overdue"].includes(status) && !state.auctions.busy;
+  const canCancel = isSeller && status !== "claimed" && highestBid <= 0 && !state.auctions.busy;
+  const canClaimPayout = isSeller && status === "claimed" && highestBid > 0 && !auction.sellerPaid && !state.auctions.busy;
+  const canForfeit = isSeller && status === "overdue" && highestBid > 0 && !state.auctions.busy;
+  const statusText = auctionStatusText(auction, status);
+  return `
+    <article class="market-card auction-card">
+      ${renderGameCard(card, { mode: "library", staticCard: true })}
+      <div class="market-price-row">
+        <span class="pill mint strong">現在 ${GOLD_NAME} ${currentPrice}</span>
+        <span class="pill aqua">${escapeHtml(statusText)}</span>
+      </div>
+      <div class="auction-info">
+        <span>出品者 ${isUserAuction ? escapeHtml(auction.sellerName || "ユーザー") : "NPC"}</span>
+        <span>開始価格 ${GOLD_NAME} ${auction.startPrice || listing.price}</span>
+        <span>最高入札者 ${escapeHtml(auction.highestBidderName || "なし")}</span>
+        <span>残り ${escapeHtml(formatAuctionRemaining(auction.endAtMs))}</span>
+        ${status === "ended" && isSeller ? `<span>受け取り期限 ${escapeHtml(formatAuctionRemaining(auction.endAtMs + AUCTION_CLAIM_GRACE_MS))}</span>` : ""}
+      </div>
+      ${refundAmount > 0 ? `
+        <button class="primary" data-action="claim-auction-refund" data-listing-id="${escapeAttr(listing.id)}" ${state.auctions.busy ? "disabled" : ""}>返金 ${GOLD_NAME} ${refundAmount} を受け取る</button>
+      ` : ""}
+      ${isSeller && status === "active" ? `
+        <button class="ghost" data-action="cancel-auction-listing" data-listing-id="${escapeAttr(listing.id)}" ${canCancel ? "" : "disabled"}>${highestBid > 0 ? "入札中のため取消不可" : "出品を取り消す"}</button>
+        <small class="market-note">${highestBid > 0 ? "入札が入った出品は取り消せません。" : "取り消すとカードが手元に戻ります。"}</small>
+      ` : status === "active" ? `
+        <div class="auction-bid-row">
+          <input data-field="auctionBid:${escapeAttr(listing.id)}" type="number" min="${minimumBid}" step="${AUCTION_MIN_BID_INCREMENT}" value="${inputValue}" ${isSignedIn ? "" : "disabled"}>
+          <button class="accent" data-action="buy-auction-card" data-listing-id="${escapeAttr(listing.id)}" ${canBid ? "" : "disabled"}>入札</button>
+        </div>
+        <small class="market-note">最低入札 ${GOLD_NAME} ${minimumBid}。入札成功時にゴールドを預けます。${isHighestBidder ? "。現在あなたが最高入札者です。" : ""}${isSeller ? "。自分の出品には入札できません。" : ""}</small>
+      ` : ["ended", "overdue"].includes(status) && isHighestBidder ? `
+        <button class="primary" data-action="claim-auction-card" data-listing-id="${escapeAttr(listing.id)}" ${canClaim ? "" : "disabled"}>落札して受け取る</button>
+        <small class="market-note">支払いは入札時の預かり金で完了済みです。</small>
+      ` : canClaimPayout ? `
+        <button class="primary" data-action="claim-auction-payout" data-listing-id="${escapeAttr(listing.id)}">売上を受け取る</button>
+        <small class="market-note">${GOLD_NAME} ${highestBid} を受け取れます。</small>
+      ` : isSeller && status === "ended" ? `
+        <button disabled>落札者の受け取り待ち</button>
+      ` : isSeller && status === "overdue" ? `
+        <button class="danger" data-action="forfeit-auction-listing" data-listing-id="${escapeAttr(listing.id)}" ${canForfeit ? "" : "disabled"}>期限切れでカードを戻す</button>
+      ` : isSeller && status === "expired" ? `
+        <button class="ghost" data-action="cancel-auction-listing" data-listing-id="${escapeAttr(listing.id)}" ${canCancel ? "" : "disabled"}>終了した出品を戻す</button>
+      ` : status === "forfeited" ? `
+        <button disabled>落札不成立</button>
+      ` : status === "cancelled" ? `
+        <button disabled>取り消し済み</button>
+      ` : status === "claimed" ? `
+        <button disabled>${auction.sellerPaid ? "取引完了" : "落札済み"}</button>
+      ` : `
+        <button disabled>${status === "ended" ? "終了" : "入札終了"}</button>
+      `}
+      ${!isSignedIn ? `<small class="market-note">入札にはGoogleログインが必要です。</small>` : ""}
+    </article>
+  `;
+}
+
+function renderMyAuctionDashboard() {
+  const summary = getMyAuctionSummary();
+  const hasItems = summary.selling.length || summary.bidding.length || summary.refunds.length || summary.history.length;
+  return `
+    <div class="auction-dashboard">
+      <div class="auction-dashboard-column">
+        <h4>自分の出品</h4>
+        ${summary.selling.length ? summary.selling.map(renderAuctionCompactRow).join("") : `<small class="muted">出品中のカードはありません。</small>`}
+      </div>
+      <div class="auction-dashboard-column">
+        <h4>入札中・返金</h4>
+        ${summary.bidding.length ? summary.bidding.map(renderAuctionCompactRow).join("") : `<small class="muted">最高入札中のカードはありません。</small>`}
+        ${summary.refunds.length ? summary.refunds.map(renderAuctionCompactRow).join("") : ""}
+      </div>
+      <div class="auction-dashboard-column">
+        <h4>履歴</h4>
+        ${summary.history.length ? summary.history.map(renderAuctionCompactRow).join("") : `<small class="muted">${hasItems ? "完了履歴はまだありません。" : "オークションの履歴はまだありません。"}</small>`}
+      </div>
+    </div>
+  `;
+}
+
+function renderAuctionCompactRow(auction) {
+  const card = getCard(auction.cardId);
+  if (!card) return "";
+  const status = getAuctionStatus(auction);
+  const currentUid = state.cloud.user?.uid || "";
+  const isSeller = auction.sellerUid === currentUid;
+  const isHighestBidder = auction.highestBidderUid === currentUid;
+  const refundAmount = getAuctionRefundAmount(auction, currentUid);
+  return `
+    <div class="auction-compact-row">
+      <div>
+        <strong>${escapeHtml(card.name)}</strong>
+        <small>${escapeHtml(auctionStatusText(auction, status))} / ${GOLD_NAME} ${auction.highestBid || auction.startPrice}</small>
+      </div>
+      <div class="auction-compact-actions">
+        ${refundAmount > 0 ? `<button class="primary" data-action="claim-auction-refund" data-listing-id="${escapeAttr(auction.id)}">返金 ${refundAmount}</button>` : ""}
+        ${isHighestBidder && ["ended", "overdue"].includes(status) ? `<button class="accent" data-action="claim-auction-card" data-listing-id="${escapeAttr(auction.id)}">受け取る</button>` : ""}
+        ${isSeller && status === "claimed" && auction.highestBid > 0 && !auction.sellerPaid ? `<button class="primary" data-action="claim-auction-payout" data-listing-id="${escapeAttr(auction.id)}">売上</button>` : ""}
+        ${isSeller && status === "overdue" ? `<button class="danger" data-action="forfeit-auction-listing" data-listing-id="${escapeAttr(auction.id)}">期限処理</button>` : ""}
+      </div>
+    </div>
   `;
 }
 
@@ -1507,6 +1864,8 @@ function renderMarketListing(listing, type) {
 }
 
 function renderSellableCard(entry) {
+  const auctionStart = state.auctions.sellInputs[entry.card.id] || getDefaultAuctionStartPrice(entry.card);
+  const canListAuction = Boolean(state.cloud.user) && entry.sellable > 0 && auctionStart > 0 && !state.auctions.busy;
   return `
     <div class="market-sell-row">
       <div>
@@ -1519,6 +1878,11 @@ function renderSellableCard(entry) {
       <div class="market-sell-action">
         <span class="pill mint strong">+${entry.price} ${GOLD_NAME}</span>
         <button data-action="sell-card" data-card-id="${entry.card.id}">1枚売却</button>
+        <div class="market-auction-action">
+          <input data-field="auctionStart:${escapeAttr(entry.card.id)}" type="number" min="1" step="10" value="${auctionStart}" ${state.cloud.user ? "" : "disabled"}>
+          <button class="accent" data-action="list-auction-card" data-card-id="${escapeAttr(entry.card.id)}" ${canListAuction ? "" : "disabled"}>1枚出品</button>
+        </div>
+        ${state.cloud.user ? `<small class="market-note">出品中はカードが所持数から外れます。</small>` : `<small class="market-note">出品にはGoogleログインが必要です。</small>`}
       </div>
     </div>
   `;
@@ -1559,6 +1923,7 @@ function renderCloudSave() {
               : `<button class="primary" data-action="cloud-login" ${cloud.configured ? "" : "disabled"}>Googleでログイン</button>`}
           </div>
         </div>
+        ${renderPlayerNameEditor("クラウド保存・オンライン対戦・オークションで使う名前です。")}
         <div class="notice cloud-message">${escapeHtml(cloud.message || "")}</div>
         ${cloud.lastSync ? `<div class="notice">最終同期: ${escapeHtml(cloud.lastSync)}</div>` : ""}
       </div>
@@ -1759,13 +2124,14 @@ function renderDeckBuilder() {
   const counts = countDeckIds(state.deckIds);
   const total = state.deckIds.length;
   const ready = total >= MIN_DECK_SIZE && total <= DECK_SIZE;
+  const activeDeck = getActiveDeck();
   return `
     <section class="stack">
       <div class="band">
         <div class="section-title">
           <div>
             <h2>山札編成</h2>
-            <p>山札は100〜300枚です。現在の山札はlocalStorageに保存されます。</p>
+            <p>山札は100〜300枚です。複数デッキを作って、使うデッキを切り替えられます。</p>
           </div>
           <div class="toolbar">
             <span class="pill ${ready ? "mint strong" : "pink strong"}">${total} / ${DECK_SIZE}枚</span>
@@ -1777,6 +2143,30 @@ function renderDeckBuilder() {
         <div class="notice">
           山札には所持枚数までしか入れられません。枚数が100〜300枚の時にバトルを開始できます。
         </div>
+      </div>
+      <div class="band deck-manager">
+        <div class="section-title">
+          <div>
+            <h3>使用デッキ</h3>
+            <p>バトル、AI戦、クエスト、オンライン対戦は選択中のデッキを使います。</p>
+          </div>
+          <div class="toolbar">
+            <button data-action="create-deck">新規デッキ</button>
+            <button data-action="duplicate-deck">コピー作成</button>
+            <button class="danger" data-action="delete-deck" ${state.decks.length > 1 ? "" : "disabled"}>削除</button>
+          </div>
+        </div>
+        <div class="deck-tabs">
+          ${state.decks.map((deck) => `
+            <button class="${deck.id === state.activeDeckId ? "accent" : "ghost"}" data-action="select-deck" data-deck-id="${escapeAttr(deck.id)}">
+              ${escapeHtml(deck.name)} <small>${sanitizeDeck(deck.deckIds).length}枚</small>
+            </button>
+          `).join("")}
+        </div>
+        <label class="deck-name-edit">
+          デッキ名
+          <input data-field="activeDeckName" maxlength="24" value="${escapeAttr(activeDeck?.name || "")}">
+        </label>
       </div>
       <div class="band">
         <div class="card-list">
@@ -1806,6 +2196,70 @@ function renderDeckRow(card, count, total, owned) {
         <button data-action="add-deck-card" data-card-id="${card.id}" ${canAdd ? "" : "disabled"}>+</button>
       </div>
     </div>
+  `;
+}
+
+function renderCardUpgrade() {
+  const ownedCards = sortCardsByRarity(getCards())
+    .filter((card) => getOwnedCount(card.id) > 0);
+  return `
+    <section class="stack">
+      <div class="band">
+        <div class="section-title">
+          <div>
+            <h2>カード強化・進化</h2>
+            <p>余った同名カードと${GOLD_NAME}を使ってカードを強化します。デッキに必要な枚数と最後の1枚は消費しません。</p>
+          </div>
+          <div class="toolbar">
+            <span class="pill aqua">${GOLD_NAME} ${state.gold}</span>
+            <span class="pill mint">所持カード ${Object.values(state.inventory).reduce((sum, count) => sum + count, 0)}枚</span>
+          </div>
+        </div>
+      </div>
+      <div class="upgrade-list">
+        ${ownedCards.length ? ownedCards.map(renderUpgradeRow).join("") : `<div class="empty-field">強化できるカードがありません</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderUpgradeRow(card) {
+  const upgrade = getCardUpgrade(card.id);
+  const enhanceCost = getEnhanceCost(card, upgrade);
+  const evolutionCost = getEvolutionCost(card, upgrade);
+  const spare = getUpgradeableSpareCount(card.id);
+  const canEnhance = canEnhanceCard(card.id);
+  const canEvolve = canEvolveCard(card.id);
+  return `
+    <article class="upgrade-row">
+      <div>
+        ${renderMiniCardHeader(card)}
+        ${renderCardEffectSummary(card)}
+        <div class="toolbar" style="margin-top: 8px;">
+          ${renderCardPills(card)}
+          <span class="pill">所持 ${getOwnedCount(card.id)}枚</span>
+          <span class="pill">強化素材 ${spare}枚</span>
+        </div>
+      </div>
+      <div class="upgrade-status">
+        <div class="upgrade-meter">
+          <span>強化 +${upgrade.level}/${CARD_MAX_ENHANCE_LEVEL}</span>
+          <div><i style="width:${Math.round((upgrade.level / CARD_MAX_ENHANCE_LEVEL) * 100)}%"></i></div>
+        </div>
+        <span class="pill pink strong">進化 ${upgrade.evolution}/${CARD_MAX_EVOLUTION}</span>
+        <small>${escapeHtml(cardUpgradeEffectText(card, upgrade))}</small>
+      </div>
+      <div class="upgrade-actions">
+        <button class="accent" data-action="enhance-card" data-card-id="${escapeAttr(card.id)}" ${canEnhance ? "" : "disabled"}>
+          強化
+        </button>
+        <small>必要: 同名${enhanceCost.cards}枚 / ${GOLD_NAME} ${enhanceCost.gold}</small>
+        <button class="primary" data-action="evolve-card" data-card-id="${escapeAttr(card.id)}" ${canEvolve ? "" : "disabled"}>
+          進化
+        </button>
+        <small>条件: 強化+${CARD_MAX_ENHANCE_LEVEL} / 同名${evolutionCost.cards}枚 / ${GOLD_NAME} ${evolutionCost.gold}</small>
+      </div>
+    </article>
   `;
 }
 
@@ -2006,7 +2460,18 @@ function getOnlineRoomPlayers(room) {
 
 function getOnlineDisplayName() {
   const user = state.cloud.user;
-  return user?.displayName || user?.email?.split("@")[0] || "プレイヤー";
+  return getPlayerDisplayName(user);
+}
+
+function getPlayerDisplayName(user = state.cloud.user) {
+  return sanitizePlayerName(state.playerName)
+    || sanitizePlayerName(user?.displayName)
+    || sanitizePlayerName(user?.email?.split("@")[0])
+    || "プレイヤー";
+}
+
+function sanitizePlayerName(name) {
+  return String(name || "").replace(/\s+/g, " ").trim().slice(0, 16);
 }
 
 function getOnlineDeckSnapshot() {
@@ -2018,21 +2483,28 @@ function getOnlineDeckSnapshot() {
   const customCards = state.customCards
     .filter((card) => deckCustomIds.has(card.id))
     .map((card) => upgradeCustomCard(card));
+  const cardUpgrades = Object.fromEntries(Object.entries(state.cardUpgrades)
+    .filter(([cardId, upgrade]) => deckIds.includes(cardId) && normalizeCardUpgrade(upgrade).level + normalizeCardUpgrade(upgrade).evolution > 0)
+    .map(([cardId, upgrade]) => [cardId, normalizeCardUpgrade(upgrade)]));
   return {
     deckIds,
-    customCards
+    customCards,
+    cardUpgrades
   };
 }
 
 function createOnlinePlayerProfile() {
   const user = state.cloud.user;
   const deckSnapshot = getOnlineDeckSnapshot();
+  const activeDeck = getActiveDeck();
   return {
     uid: user.uid,
     name: getOnlineDisplayName(),
+    deckName: activeDeck?.name || "デッキ",
     deckIds: deckSnapshot.deckIds,
     deckCount: deckSnapshot.deckIds.length,
-    customCards: deckSnapshot.customCards
+    customCards: deckSnapshot.customCards,
+    cardUpgrades: deckSnapshot.cardUpgrades
   };
 }
 
@@ -2053,6 +2525,7 @@ function normalizeOnlineBattle(battle, roomId) {
     ...battle,
     mode: "online",
     roomId: roomId || battle.roomId || state.online.roomId,
+    revision: Math.max(0, clampInteger(battle.revision, 0, 99999999)),
     aiPlayer: null,
     aiScheduled: false,
     aiThinking: false
@@ -2197,6 +2670,7 @@ function subscribeOnlineRoom(roomId) {
 }
 
 function leaveOnlineRoomSilently() {
+  window.clearTimeout(onlineProfileTimer);
   if (typeof state.online.unsubscribe === "function") {
     state.online.unsubscribe();
   }
@@ -2214,10 +2688,41 @@ function leaveOnlineRoom() {
   render();
 }
 
+function scheduleOnlineProfileUpdate() {
+  if (!cloudApi || !state.cloud.user || !state.online.roomId || state.online.playerIndex === null || state.online.room?.battle) return;
+  window.clearTimeout(onlineProfileTimer);
+  onlineProfileTimer = window.setTimeout(() => {
+    updateOnlinePlayerProfileName().catch((error) => {
+      state.online.message = `名前の更新に失敗しました。${error?.message || ""}`;
+      if (state.screen === "online") render();
+    });
+  }, 700);
+}
+
+async function updateOnlinePlayerProfileName() {
+  if (!cloudApi || !state.online.roomId || state.online.playerIndex === null || state.online.room?.battle) return;
+  const players = getOnlineRoomPlayers(state.online.room);
+  const index = state.online.playerIndex;
+  if (!players[index]?.uid || players[index].uid !== state.cloud.user?.uid) return;
+  players[index] = {
+    ...players[index],
+    name: getPlayerDisplayName()
+  };
+  await cloudApi.setDoc(getOnlineRoomRef(state.online.roomId), {
+    players,
+    updatedAt: cloudApi.serverTimestamp()
+  }, { merge: true });
+}
+
 async function startOnlineBattle() {
   if (!ensureOnlineReady() || state.online.busy) return;
   const room = state.online.room;
   const players = getOnlineRoomPlayers(room);
+  if (state.online.playerIndex !== 0) {
+    state.online.message = "オンラインバトル開始は部屋を作ったプレイヤーだけが行えます。";
+    render();
+    return;
+  }
   if (!players[0]?.uid || !players[1]?.uid) {
     state.online.message = "2人そろうと開始できます。";
     render();
@@ -2257,12 +2762,13 @@ function createOnlineBattle(room) {
     aiScheduled: false,
     aiThinking: false,
     turnNumber: 0,
+    revision: 0,
     pendingAttackerUid: null,
     winner: null,
     initialDeckSize: Math.max(deck1.length, deck2.length),
     players: [
-      createPlayer(players[0].name || "P1", deck1),
-      createPlayer(players[1].name || "P2", deck2)
+      createPlayer(players[0].name || "P1", deck1, players[0].cardUpgrades),
+      createPlayer(players[1].name || "P2", deck2, players[1].cardUpgrades)
     ],
     log: ["オンライン対戦を開始しました。"]
   };
@@ -2287,11 +2793,35 @@ async function saveOnlineBattle(battle = state.battle, status = null) {
   if (!isOnlineBattle(battle) || !state.online.roomId || !cloudApi) return;
   const roomRef = getOnlineRoomRef(state.online.roomId);
   const battleStatus = status || (battle.phase === "over" ? "over" : "battle");
-  await cloudApi.setDoc(roomRef, {
-    status: battleStatus,
-    battle: serializeOnlineBattle(battle),
-    updatedAt: cloudApi.serverTimestamp()
-  }, { merge: true });
+  if (!cloudApi.runTransaction) {
+    const serialized = serializeOnlineBattle(battle);
+    serialized.revision = Math.max(0, clampInteger(battle.revision, 0, 99999999)) + 1;
+    battle.revision = serialized.revision;
+    await cloudApi.setDoc(roomRef, {
+      status: battleStatus,
+      battle: serialized,
+      updatedAt: cloudApi.serverTimestamp()
+    }, { merge: true });
+    return;
+  }
+  await cloudApi.runTransaction(cloudApi.db, async (transaction) => {
+    const snapshot = await transaction.get(roomRef);
+    if (!snapshot.exists()) throw new Error("部屋が見つかりません。");
+    const room = snapshot.data();
+    const remoteRevision = Math.max(0, clampInteger(room?.battle?.revision, 0, 99999999));
+    const localRevision = Math.max(0, clampInteger(battle.revision, 0, 99999999));
+    if (room?.battle && remoteRevision > localRevision) {
+      throw new Error("相手の操作が先に反映されています。画面を更新してからもう一度操作してください。");
+    }
+    const serialized = serializeOnlineBattle(battle);
+    serialized.revision = remoteRevision + 1;
+    battle.revision = serialized.revision;
+    transaction.set(roomRef, {
+      status: battleStatus,
+      battle: serialized,
+      updatedAt: cloudApi.serverTimestamp()
+    }, { merge: true });
+  });
 }
 
 async function resetOnlineRoomBattle() {
@@ -2333,6 +2863,8 @@ function renderOnlinePlaceholder() {
   const players = getOnlineRoomPlayers(room);
   const roomId = state.online.roomId || state.online.inputRoomId;
   const signedIn = Boolean(user);
+  const activeDeck = getActiveDeck();
+  const deckReady = state.deckIds.length >= MIN_DECK_SIZE && state.deckIds.length <= DECK_SIZE;
 
   if (!state.cloud.configured) {
     return `
@@ -2368,7 +2900,8 @@ function renderOnlinePlaceholder() {
   }
 
   if (room) {
-    const canStart = players[0]?.uid && players[1]?.uid && !room.battle;
+    const isHost = state.online.playerIndex === 0;
+    const canStart = isHost && players[0]?.uid && players[1]?.uid && !room.battle;
     return `
       <section class="stack">
         <div class="band">
@@ -2383,6 +2916,7 @@ function renderOnlinePlaceholder() {
             </div>
           </div>
           ${state.online.message ? `<div class="notice">${escapeHtml(state.online.message)}</div>` : ""}
+          ${renderPlayerNameEditor("待機中の部屋には少し待つと反映されます。対戦開始後の名前は次の対戦から反映されます。")}
         </div>
         <div class="split">
           ${[0, 1].map((index) => `
@@ -2393,7 +2927,7 @@ function renderOnlinePlaceholder() {
                   <strong>${escapeHtml(players[index].name || `P${index + 1}`)}</strong>
                   <span class="pill ${state.online.playerIndex === index ? "pink strong" : ""}">${state.online.playerIndex === index ? "あなた" : "参加中"}</span>
                 </div>
-                <p class="muted">山札 ${players[index].deckCount || 0}枚</p>
+                <p class="muted">${escapeHtml(players[index].deckName || "デッキ")} / 山札 ${players[index].deckCount || 0}枚</p>
               ` : `<div class="empty-field">参加待ち</div>`}
             </div>
           `).join("")}
@@ -2403,7 +2937,7 @@ function renderOnlinePlaceholder() {
             <button class="primary" data-action="screen" data-screen="battle">対戦画面へ戻る</button>
           ` : `
             <button class="primary" data-action="start-online-battle" ${canStart ? "" : "disabled"}>オンラインバトル開始</button>
-            <div class="notice">2人そろったら開始できます。開始後に先攻・後攻ルーレットへ進みます。</div>
+            <div class="notice">${isHost ? "2人そろったら開始できます。" : "開始は部屋を作ったプレイヤーが行います。"}開始後に先攻・後攻ルーレットへ進みます。</div>
           `}
         </div>
       </section>
@@ -2420,14 +2954,17 @@ function renderOnlinePlaceholder() {
           </div>
           <div class="toolbar">
             <span class="pill pink strong">${escapeHtml(user.displayName || user.email || "ログイン中")}</span>
+            <span class="pill ${deckReady ? "mint strong" : "pink strong"}">${escapeHtml(activeDeck?.name || "デッキ")} ${state.deckIds.length}/${DECK_SIZE}枚</span>
           </div>
         </div>
+        ${renderPlayerNameEditor("部屋を作る前、または参加する前に変更してください。")}
       </div>
       <div class="split">
         <div class="band stack">
           <h3>部屋を作る</h3>
           <p class="muted">今の山札を使って部屋を作ります。相手には部屋IDを伝えてください。</p>
-          <button class="primary" data-action="create-online-room" ${state.online.busy ? "disabled" : ""}>部屋を作る</button>
+          <button class="primary" data-action="create-online-room" ${state.online.busy || !deckReady ? "disabled" : ""}>部屋を作る</button>
+          ${deckReady ? "" : `<div class="notice">オンライン対戦には100〜300枚の山札が必要です。</div>`}
         </div>
         <div class="band stack">
           <h3>部屋IDで参加</h3>
@@ -2437,7 +2974,7 @@ function renderOnlinePlaceholder() {
       </div>
       <div class="band">
         <h3>現在の注意</h3>
-        <p class="notice">この版はまず遊べる同期を優先したMVPです。画面上は相手の手札を隠しますが、厳密な不正対策用の完全非公開データ分離は次の段階で強化できます。</p>
+        <p class="notice">同期の上書き防止を入れています。画面上は相手の手札を隠しますが、静的サイト版のため完全なサーバー判定ではありません。</p>
         ${state.online.message ? `<div class="notice">${escapeHtml(state.online.message)}</div>` : ""}
       </div>
     </section>
@@ -2528,7 +3065,7 @@ function getHandDetailContext() {
     const player = battle.players[playerIndex];
     const handCard = player.hand.find((entry) => entry.uid === state.cardDetailHandUid);
     if (!handCard) continue;
-    const card = getCard(handCard.cardId);
+    const card = getBattleCard(handCard.cardId, player);
     if (!card) return null;
     const actionsEnabled = isBattleActive() && !isAiTurn(battle) && canControlBattle(battle) && playerIndex === battle.activePlayer;
     const canPay = actionsEnabled && player.currentCost >= card.cost;
@@ -2587,11 +3124,11 @@ function showHandCardDetail(uid) {
   const battle = state.battle;
   if (!battle || !uid) return;
   const players = isOnlineBattle(battle) ? [battle.players[getOnlinePlayerIndex()]] : battle.players;
-  const handCard = players
+  const owner = players
     .filter(Boolean)
-    .flatMap((player) => player.hand)
-    .find((entry) => entry.uid === uid);
-  if (!handCard || !getCard(handCard.cardId)) return;
+    .find((player) => player.hand.some((entry) => entry.uid === uid));
+  const handCard = owner?.hand.find((entry) => entry.uid === uid);
+  if (!handCard || !getBattleCard(handCard.cardId, owner)) return;
   state.cardDetailId = handCard.cardId;
   state.cardDetailHandUid = uid;
   render();
@@ -2600,8 +3137,9 @@ function showHandCardDetail(uid) {
 function getSortedHand(hand) {
   if (state.battleHandSort === "draw") return hand;
   const direction = state.battleHandSort === "costDesc" ? -1 : 1;
+  const owner = state.battle?.players?.find((player) => player.hand === hand);
   return hand
-    .map((handCard, index) => ({ handCard, index, card: getCard(handCard.cardId) }))
+    .map((handCard, index) => ({ handCard, index, card: getBattleCard(handCard.cardId, owner) || getCard(handCard.cardId) }))
     .sort((a, b) => {
       const costDiff = ((a.card?.cost || 999) - (b.card?.cost || 999)) * direction;
       return costDiff || a.index - b.index;
@@ -2719,17 +3257,21 @@ function renderOnlineBattleBoard(battle) {
 function renderAiBattleBoard(battle) {
   const human = battle.players[0];
   const ai = battle.players[1];
+  const active = battle.players[battle.activePlayer];
   const humanActive = battle.activePlayer === 0;
   return `
     <section class="battle-layout">
       ${renderScoreboard(battle)}
       <div class="band battle-actions">
-        <span class="pill pink strong">${escapeHtml(battle.players[battle.activePlayer].name)}のターン</span>
+        <span class="pill pink strong">${escapeHtml(active.name)}のターン</span>
         <span class="pill aqua">ターン ${battle.turnNumber}</span>
-        <span class="pill mint">倍率 ${formatMultiplier(levelMultiplier(battle.players[battle.activePlayer].level))}</span>
+        <span class="pill aqua strong">コスト ${active.currentCost}/${active.maxCost}</span>
+        <span class="pill mint">倍率 ${formatMultiplier(levelMultiplier(active.level))}</span>
+        <button class="${state.autoBattle ? "primary" : "ghost"}" data-action="toggle-auto-battle">${state.autoBattle ? "オートON" : "オートOFF"}</button>
+        ${battle.autoThinking ? `<span class="pill aqua strong">オート行動中</span>` : ""}
         ${battle.pendingAttackerUid && humanActive ? `<button data-action="cancel-attack">攻撃選択を解除</button>` : ""}
         ${isAiTurn(battle) ? `<span class="pill aqua strong">${escapeHtml(ai.name)}が行動中</span>` : `<button class="accent" data-action="end-turn">ターンエンド</button>`}
-        ${battle.mode === "ai" ? `<button data-action="new-ai-battle">新規AI戦</button>` : `<button data-action="screen" data-screen="quest">クエスト選択</button>`}
+        ${battle.mode === "ai" ? `<button data-action="new-ai-battle">新規AI戦</button>` : ""}
         <button class="danger" data-action="surrender">降参</button>
       </div>
       <div class="board">
@@ -2828,7 +3370,7 @@ function renderFieldZone(battle, ownerIndex) {
 
 function renderFieldCard(unit, owner, isActiveOwner, ownerIndex) {
   const battle = state.battle;
-  const card = getCard(unit.cardId);
+  const card = getBattleCard(unit.cardId, owner);
   const stats = getEffectiveStats(unit, owner);
   const pending = battle.pendingAttackerUid;
   const canAct = canControlBattle(battle);
@@ -2859,7 +3401,7 @@ function renderFieldCard(unit, owner, isActiveOwner, ownerIndex) {
 }
 
 function renderHandCard(handCard, player, actionsEnabled = true) {
-  const card = getCard(handCard.cardId);
+  const card = getBattleCard(handCard.cardId, player);
   const canPay = actionsEnabled && player.currentCost >= card.cost;
   const costLocked = player.currentCost < card.cost;
   const actionLabel = card.type === "character" ? "召喚" : "使用";
@@ -2940,50 +3482,6 @@ function normalizeCardAttribute(attribute) {
 function cardAttributeLabel(attribute) {
   const normalized = normalizeCardAttribute(attribute);
   return CARD_ATTRIBUTES.find((entry) => entry.id === normalized)?.label || "無";
-}
-
-function cardAttributeAdvantageTarget(attribute) {
-  return ATTRIBUTE_ADVANTAGE[normalizeCardAttribute(attribute)] || null;
-}
-
-function cardAttributeWeaknessTarget(attribute) {
-  const normalized = normalizeCardAttribute(attribute);
-  return Object.entries(ATTRIBUTE_ADVANTAGE).find(([, target]) => target === normalized)?.[0] || null;
-}
-
-function cardAttributeRelationText(attribute) {
-  const strongTarget = cardAttributeAdvantageTarget(attribute);
-  const weakTarget = cardAttributeWeaknessTarget(attribute);
-  if (!strongTarget && !weakTarget) return "";
-  const strongText = strongTarget ? `${cardAttributeLabel(strongTarget)}に有利` : "有利なし";
-  const weakText = weakTarget ? `${cardAttributeLabel(weakTarget)}に不利` : "不利なし";
-  return `属性相性: ${strongText} / ${weakText}`;
-}
-
-function getAttributeDamageMultiplier(attackerCard, defenderCard) {
-  const attackerAttribute = normalizeCardAttribute(attackerCard?.attribute);
-  const defenderAttribute = normalizeCardAttribute(defenderCard?.attribute);
-  if (attackerAttribute === "neutral" || defenderAttribute === "neutral" || attackerAttribute === defenderAttribute) {
-    return 1;
-  }
-  if (ATTRIBUTE_ADVANTAGE[attackerAttribute] === defenderAttribute) {
-    return ATTRIBUTE_ADVANTAGE_MULTIPLIER;
-  }
-  if (ATTRIBUTE_ADVANTAGE[defenderAttribute] === attackerAttribute) {
-    return ATTRIBUTE_DISADVANTAGE_MULTIPLIER;
-  }
-  return 1;
-}
-
-function getAttributeBattleDamage(baseDamage, attackerCard, defenderCard) {
-  return Math.max(0, Math.ceil(baseDamage * getAttributeDamageMultiplier(attackerCard, defenderCard)));
-}
-
-function attributeMatchupShortText(attackerCard, defenderCard) {
-  const multiplier = getAttributeDamageMultiplier(attackerCard, defenderCard);
-  if (multiplier > 1) return `属性有利 ${formatMultiplier(multiplier)}`;
-  if (multiplier < 1) return `属性不利 ${formatMultiplier(multiplier)}`;
-  return "属性等倍";
 }
 
 function renderMiniCardHeader(card) {
@@ -3148,11 +3646,18 @@ function renderSpellBody(card) {
 
 function renderCardPills(card) {
   const rarity = card.rarity || "N";
+  const upgrade = normalizeCardUpgrade(card.upgrade);
   const pills = [
     `<span class="pill rarity-pill rarity-${rarity}">${escapeHtml(RARITY_LABELS[rarity] || rarity)}</span>`,
     `<span class="pill mint">属性 ${escapeHtml(cardAttributeLabel(card.attribute))}</span>`,
     `<span class="pill strong">コスト ${card.cost}</span>`
   ];
+  if (upgrade.level > 0) {
+    pills.push(`<span class="pill aqua strong">強化 +${upgrade.level}</span>`);
+  }
+  if (upgrade.evolution > 0) {
+    pills.push(`<span class="pill pink strong">進化 ${upgrade.evolution}</span>`);
+  }
   if (card.type === "character" && card.abilities?.includes("block")) {
     pills.push(`<span class="pill pink strong">ブロック</span>`);
   }
@@ -3179,8 +3684,6 @@ function cardEffectText(card) {
   const effects = [];
   if (card.abilities?.includes("block")) effects.push("ブロック");
   if (card.characterEffect) effects.push(characterEffectText(card.characterEffect));
-  const attributeRelation = cardAttributeRelationText(card.attribute);
-  if (attributeRelation) effects.push(attributeRelation);
   return effects.length ? effects.join(" / ") : "効果なし";
 }
 
@@ -3235,6 +3738,7 @@ function runGacha(count) {
   saveInventory();
   saveCreatorTickets();
   saveGachaHistory();
+  addDailyMissionProgress("gachaPack", packCount);
   const ticketCount = results.filter((result) => result.type === "ticket").length;
   const topRarity = gachaFxRarity(results);
   setFx("gacha", `${activeSet.label} 開封`, `${packCount}パック / ${resultCount}枠 / 最高 ${topRarity}`, topRarity);
@@ -3372,14 +3876,16 @@ function startBattle(mode = "local", options = {}) {
     aiPlayer: aiMode ? 1 : null,
     aiScheduled: false,
     aiThinking: false,
+    autoScheduled: false,
+    autoThinking: false,
     pendingAttackerUid: null,
     initialDeckSize: state.deckIds.length,
     turnNumber: 0,
     winner: null,
     rewardGranted: false,
     players: [
-      createPlayer(aiMode ? "あなた" : "プレイヤー1", p1Deck),
-      createPlayer(aiMode ? "AI" : "プレイヤー2", p2Deck)
+      createPlayer(aiMode ? "あなた" : "プレイヤー1", p1Deck, state.cardUpgrades),
+      createPlayer(aiMode ? "AI" : "プレイヤー2", p2Deck, aiMode ? {} : state.cardUpgrades)
     ],
     log: []
   };
@@ -3424,13 +3930,15 @@ function startQuestBattle(stageId) {
     aiPlayer: 1,
     aiScheduled: false,
     aiThinking: false,
+    autoScheduled: false,
+    autoThinking: false,
     pendingAttackerUid: null,
     initialDeckSize: state.deckIds.length,
     turnNumber: 0,
     winner: null,
     rewardGranted: false,
     players: [
-      createPlayer("あなた", p1Deck),
+      createPlayer("あなた", p1Deck, state.cardUpgrades),
       createPlayer(stage.enemyName, enemyDeck)
     ],
     log: []
@@ -3449,6 +3957,7 @@ function startQuestBattle(stageId) {
   state.graveChoice = null;
   startTurn(battle, 0);
   render();
+  maybeScheduleAutoBattle();
 }
 
 function buildQuestEnemyDeck(stage) {
@@ -3475,6 +3984,7 @@ function spinRoulette() {
     render();
     syncOnlineBattle();
     maybeScheduleAiTurn();
+    maybeScheduleAutoBattle();
     return;
   }
   battle.firstPlayer = Math.random() < 0.5 ? 0 : 1;
@@ -3492,6 +4002,7 @@ function readyNextTurn() {
   startTurn(battle, battle.nextActivePlayer);
   render();
   maybeScheduleAiTurn();
+  maybeScheduleAutoBattle();
 }
 
 function startTurn(battle, playerIndex) {
@@ -3533,6 +4044,7 @@ function endTurn() {
     startTurn(battle, battle.nextActivePlayer);
     render();
     maybeScheduleAiTurn();
+    maybeScheduleAutoBattle();
     return;
   }
   battle.phase = "handoff";
@@ -3551,7 +4063,7 @@ function playHandCard(uid) {
   const handIndex = player.hand.findIndex((card) => card.uid === uid);
   if (handIndex === -1) return;
   const handCard = player.hand[handIndex];
-  const card = getCard(handCard.cardId);
+  const card = getBattleCard(handCard.cardId, player);
   if (!card || player.currentCost < card.cost) {
     showToast("使用可能コストが足りません。");
     return;
@@ -3602,7 +4114,7 @@ function sendHandCardToGrave(uid) {
   const handIndex = player.hand.findIndex((card) => card.uid === uid);
   if (handIndex === -1) return;
   const handCard = player.hand[handIndex];
-  const card = getCard(handCard.cardId);
+  const card = getBattleCard(handCard.cardId, player);
   if (!card || player.currentCost < card.cost) {
     showToast("墓地へ送るコストが足りません。");
     return;
@@ -3626,7 +4138,7 @@ function startHandGraveChoice(battle, player, count, sourceName) {
     battle.log.push(`${player.name}は${sourceName}の効果で墓地へ送れる手札がありませんでした。`);
     return;
   }
-  if (isCpuBattleMode(battle.mode) && playerIndex === battle.aiPlayer) {
+  if (isCpuBattleMode(battle.mode) && (playerIndex === battle.aiPlayer || shouldAutoControlPlayer(battle, playerIndex))) {
     const selectedUids = chooseAutoGraveHandUids(player, max);
     sendHandCardsToGraveByUid(battle, player, selectedUids, sourceName);
     return;
@@ -3643,7 +4155,7 @@ function startHandGraveChoice(battle, player, count, sourceName) {
 
 function chooseAutoGraveHandUids(player, max) {
   return player.hand
-    .map((handCard) => ({ handCard, card: getCard(handCard.cardId) }))
+    .map((handCard) => ({ handCard, card: getBattleCard(handCard.cardId, player) }))
     .filter((entry) => entry.card)
     .sort((a, b) => b.card.cost - a.card.cost)
     .slice(0, max)
@@ -3701,7 +4213,7 @@ function sendHandCardsToGraveByUid(battle, player, uids, sourceName) {
     const handIndex = player.hand.findIndex((handCard) => handCard.uid === uid);
     if (handIndex === -1) return;
     const handCard = player.hand[handIndex];
-    const card = getCard(handCard.cardId);
+    const card = getBattleCard(handCard.cardId, player);
     if (!card) return;
     player.hand.splice(handIndex, 1);
     player.grave.push(card.id);
@@ -3729,7 +4241,7 @@ function selectAttacker(uid) {
   const unit = player.field.find((fieldUnit) => fieldUnit.uid === uid);
   if (!unit || !unit.canAttack) return;
   battle.pendingAttackerUid = uid;
-  battle.log.push(`${player.name}が${getCard(unit.cardId).name}で攻撃対象を選んでいます。`);
+  battle.log.push(`${player.name}が${getBattleCard(unit.cardId, player).name}で攻撃対象を選んでいます。`);
   render();
   syncOnlineBattle();
 }
@@ -3752,26 +4264,24 @@ function attackCard(targetUid) {
 
   const blocker = findBlocker(defenderPlayer, target.uid);
   if (blocker && blocker.uid !== target.uid) {
-    battle.log.push(`ブロックにより攻撃対象が${getCard(blocker.cardId).name}へ変更されました。`);
+    battle.log.push(`ブロックにより攻撃対象が${getBattleCard(blocker.cardId, defenderPlayer).name}へ変更されました。`);
     target = blocker;
   }
 
-  const attackerCard = getCard(attacker.cardId);
-  const targetCard = getCard(target.cardId);
+  const attackerCard = getBattleCard(attacker.cardId, attackerPlayer);
+  const targetCard = getBattleCard(target.cardId, defenderPlayer);
   const atkStats = getEffectiveStats(attacker, attackerPlayer);
   const defStats = getEffectiveStats(target, defenderPlayer);
-  const attackDamage = getAttributeBattleDamage(atkStats.atk, attackerCard, targetCard);
-  const counterDamage = getAttributeBattleDamage(defStats.atk, targetCard, attackerCard);
 
-  damageUnit(target, defenderPlayer, attackDamage);
-  damageUnit(attacker, attackerPlayer, counterDamage);
+  damageUnit(target, defenderPlayer, atkStats.atk);
+  damageUnit(attacker, attackerPlayer, defStats.atk);
   attacker.canAttack = false;
   battle.pendingAttackerUid = null;
 
-  battle.log.push(`${attackerPlayer.name}の${attackerCard.name}が${targetCard.name}を攻撃しました。${targetCard.name}へ${attackDamage}ダメージ（${attributeMatchupShortText(attackerCard, targetCard)}）、反撃で${counterDamage}ダメージ（${attributeMatchupShortText(targetCard, attackerCard)}）。`);
+  battle.log.push(`${attackerPlayer.name}の${attackerCard.name}が${targetCard.name}を攻撃しました。双方が反撃ダメージを受けました。`);
   resolveCharacterEffect(battle, attackerPlayer, defenderPlayer, attackerCard, "attack", attacker, atkStats.atk);
   destroyDefeatedUnits(battle, attackerPlayer, defenderPlayer);
-  setFx("attack", "攻撃", `${attackerCard.name} → ${targetCard.name} / ${attributeMatchupShortText(attackerCard, targetCard)}`, attackerCard.rarity || "N");
+  setFx("attack", "攻撃", `${attackerCard.name} → ${targetCard.name}`, attackerCard.rarity || "N");
   checkBattleEnd(battle);
   render();
   syncOnlineBattle();
@@ -3793,7 +4303,7 @@ function attackPlayer() {
   }
   const attacker = attackerPlayer.field.find((unit) => unit.uid === battle.pendingAttackerUid);
   if (!attacker || !attacker.canAttack) return;
-  const card = getCard(attacker.cardId);
+  const card = getBattleCard(attacker.cardId, attackerPlayer);
   const damage = getEffectiveStats(attacker, attackerPlayer).atk;
   defenderPlayer.hp -= damage;
   attacker.canAttack = false;
@@ -3942,7 +4452,7 @@ function destroyDefeatedUnits(battle, playerA, playerB) {
     const defeated = player.field.filter((unit) => unit.baseDefRemaining <= 0.0001);
     if (!defeated.length) return;
     defeated.forEach((unit) => {
-      const card = getCard(unit.cardId);
+      const card = getBattleCard(unit.cardId, player);
       player.grave.push(card.id);
       player.level += card.cost;
       battle.log.push(`${player.name}の${card.name}が破壊され、墓地へ送られました。レベルが${player.level}になりました。`);
@@ -3957,7 +4467,7 @@ function damageUnit(unit, owner, damage) {
 }
 
 function healUnitDefense(unit, owner, amount) {
-  const card = getCard(unit.cardId);
+  const card = getBattleCard(unit.cardId, owner);
   if (!card || card.type !== "character") return 0;
   const multiplier = levelMultiplier(owner.level);
   const before = getEffectiveStats(unit, owner).def;
@@ -3978,6 +4488,234 @@ function maybeScheduleAiTurn() {
     if (!isAiTurn(current)) return;
     runAiTurn();
   }, 700);
+}
+
+function maybeScheduleAutoBattle() {
+  const battle = state.battle;
+  if (!shouldAutoControlPlayer(battle, 0) || battle.autoScheduled) return;
+  battle.autoScheduled = true;
+  window.setTimeout(() => {
+    const current = state.battle;
+    if (!current) return;
+    current.autoScheduled = false;
+    if (!shouldAutoControlPlayer(current, 0)) return;
+    runAutoBattleTurn();
+  }, 450);
+}
+
+function shouldAutoControlPlayer(battle = state.battle, playerIndex = 0) {
+  return Boolean(
+    state.autoBattle &&
+    battle &&
+    isCpuBattleMode(battle.mode) &&
+    battle.phase === "battle" &&
+    battle.activePlayer === playerIndex &&
+    playerIndex !== battle.aiPlayer
+  );
+}
+
+function runAutoBattleTurn() {
+  const battle = state.battle;
+  if (!shouldAutoControlPlayer(battle, 0)) return;
+  battle.autoThinking = true;
+  state.cardDetailId = null;
+  state.cardDetailHandUid = null;
+  state.graveChoice = null;
+
+  let actionCount = 0;
+  while (actionCount < 16 && battle.phase !== "over" && shouldAutoControlPlayer(battle, 0)) {
+    const acted = tryAutoUseSpell(battle, 0) || tryAutoSummon(battle, 0) || tryAutoLevelUp(battle, 0);
+    if (!acted) break;
+    actionCount += 1;
+  }
+
+  if (battle.phase !== "over" && shouldAutoControlPlayer(battle, 0)) {
+    autoAttackAll(battle, 0);
+  }
+
+  if (battle.phase === "over") {
+    battle.autoThinking = false;
+    render();
+    return;
+  }
+
+  if (!shouldAutoControlPlayer(battle, 0)) {
+    battle.autoThinking = false;
+    render();
+    return;
+  }
+
+  battle.autoThinking = false;
+  battle.pendingAttackerUid = null;
+  battle.log.push("オート戦闘がターンエンドしました。");
+  startTurn(battle, 1);
+  render();
+  maybeScheduleAiTurn();
+}
+
+function tryAutoUseSpell(battle, playerIndex) {
+  const player = battle.players[playerIndex];
+  const playable = player.hand
+    .map((handCard, index) => ({ handCard, index, card: getBattleCard(handCard.cardId, player) }))
+    .filter((entry) => entry.card?.type === "spell" && entry.card.cost <= player.currentCost);
+
+  const maxCostSpell = playable.find((entry) => entry.card.spell.effect === "maxCost");
+  if (maxCostSpell) return autoPlayHandIndex(battle, playerIndex, maxCostSpell.index);
+
+  const healSpell = playable.find((entry) => entry.card.spell.effect === "heal" && player.hp <= MAX_HP - entry.card.spell.value);
+  if (healSpell) return autoPlayHandIndex(battle, playerIndex, healSpell.index);
+
+  const graveHandSpell = playable.find((entry) => entry.card.spell.effect === "graveHand" && player.hand.length > 2);
+  if (graveHandSpell) return autoPlayHandIndex(battle, playerIndex, graveHandSpell.index);
+
+  const drawSpell = playable.find((entry) => entry.card.spell.effect === "draw" && player.hand.length <= 8 && player.deck.length >= effectiveDrawValue(entry.card.spell.value));
+  if (drawSpell) return autoPlayHandIndex(battle, playerIndex, drawSpell.index);
+
+  return false;
+}
+
+function tryAutoSummon(battle, playerIndex) {
+  const player = battle.players[playerIndex];
+  if (player.field.length >= FIELD_LIMIT) return false;
+  const candidates = player.hand
+    .map((handCard, index) => ({ handCard, index, card: getBattleCard(handCard.cardId, player) }))
+    .filter((entry) => entry.card?.type === "character" && entry.card.cost <= player.currentCost)
+    .sort((a, b) => aiCardScore(b.card) - aiCardScore(a.card));
+  if (!candidates.length) return false;
+  return autoPlayHandIndex(battle, playerIndex, candidates[0].index);
+}
+
+function tryAutoLevelUp(battle, playerIndex) {
+  const player = battle.players[playerIndex];
+  if (player.currentCost < 1 || player.hand.length < 5 || player.level >= LEVEL_FOR_MULTIPLIER_CAP) return false;
+  const candidates = player.hand
+    .map((handCard, index) => ({ handCard, index, card: getBattleCard(handCard.cardId, player) }))
+    .filter((entry) => entry.card && entry.card.cost <= player.currentCost)
+    .sort((a, b) => b.card.cost - a.card.cost);
+  if (!candidates.length) return false;
+  return autoSendHandIndexToGrave(battle, playerIndex, candidates[0].index);
+}
+
+function autoPlayHandIndex(battle, playerIndex, handIndex) {
+  const player = battle.players[playerIndex];
+  const opponent = battle.players[1 - playerIndex];
+  const handCard = player.hand[handIndex];
+  const card = getBattleCard(handCard?.cardId, player);
+  if (!card || player.currentCost < card.cost) return false;
+
+  if (card.type === "character") {
+    if (player.field.length >= FIELD_LIMIT) return false;
+    player.currentCost -= card.cost;
+    player.hand.splice(handIndex, 1);
+    player.field.push({
+      uid: createUid("unit"),
+      cardId: card.id,
+      baseDefRemaining: card.def,
+      canAttack: false
+    });
+    battle.log.push(`${player.name}がオートで${card.name}を召喚しました。`);
+    resolveCharacterEffect(battle, player, opponent, card, "summon");
+    setFx("summon", "オート召喚", card.name, card.rarity || "N");
+  } else {
+    player.currentCost -= card.cost;
+    player.hand.splice(handIndex, 1);
+    player.grave.push(card.id);
+    player.level += card.cost;
+    battle.log.push(`${player.name}がオートで${card.name}を使用し、墓地へ送りました。レベルは${player.level}になりました。`);
+    resolveSpell(battle, player, card);
+    setFx("spell", "オート呪文", card.name, card.rarity || "N");
+  }
+
+  checkBattleEnd(battle);
+  return true;
+}
+
+function autoSendHandIndexToGrave(battle, playerIndex, handIndex) {
+  const player = battle.players[playerIndex];
+  const handCard = player.hand[handIndex];
+  const card = getBattleCard(handCard?.cardId, player);
+  if (!card || player.currentCost < card.cost) return false;
+  player.currentCost -= card.cost;
+  player.hand.splice(handIndex, 1);
+  player.grave.push(card.id);
+  player.level += card.cost;
+  battle.log.push(`${player.name}がオートで${card.name}を墓地へ送り、レベルは${player.level}になりました。`);
+  setFx("level", "オート墓地送り", `LV +${card.cost}`, card.rarity || "N");
+  return true;
+}
+
+function autoAttackAll(battle, attackerIndex) {
+  const attackerPlayer = battle.players[attackerIndex];
+  const defenderPlayer = battle.players[1 - attackerIndex];
+  let attacks = 0;
+  while (attacks < FIELD_LIMIT && battle.phase !== "over") {
+    const attacker = attackerPlayer.field.find((unit) => unit.canAttack);
+    if (!attacker) break;
+    if (defenderPlayer.field.length === 0) {
+      autoAttackPlayer(battle, attackerIndex, attacker);
+    } else {
+      autoAttackCard(battle, attackerIndex, attacker, chooseAutoAttackTarget(battle, attackerIndex, attacker));
+    }
+    attacks += 1;
+  }
+}
+
+function chooseAutoAttackTarget(battle, attackerIndex, attacker) {
+  const defender = battle.players[1 - attackerIndex];
+  const blockers = defender.field.filter((unit) => getBattleCard(unit.cardId, defender).abilities?.includes("block"));
+  if (blockers.length) return blockers[0];
+
+  const attackerPlayer = battle.players[attackerIndex];
+  const attackerAtk = getEffectiveStats(attacker, attackerPlayer).atk;
+  return [...defender.field].sort((a, b) => {
+    const aStats = getEffectiveStats(a, defender);
+    const bStats = getEffectiveStats(b, defender);
+    const aKillable = attackerAtk >= aStats.def ? 1 : 0;
+    const bKillable = attackerAtk >= bStats.def ? 1 : 0;
+    if (aKillable !== bKillable) return bKillable - aKillable;
+    if (aStats.atk !== bStats.atk) return bStats.atk - aStats.atk;
+    return aStats.def - bStats.def;
+  })[0];
+}
+
+function autoAttackCard(battle, attackerIndex, attacker, target) {
+  const attackerPlayer = battle.players[attackerIndex];
+  const defenderPlayer = battle.players[1 - attackerIndex];
+  if (!attacker || !target || !attacker.canAttack) return;
+
+  let actualTarget = target;
+  const blocker = findBlocker(defenderPlayer, target.uid);
+  if (blocker && blocker.uid !== target.uid) {
+    battle.log.push(`ブロックによりオート攻撃対象が${getBattleCard(blocker.cardId, defenderPlayer).name}へ変更されました。`);
+    actualTarget = blocker;
+  }
+
+  const attackerCard = getBattleCard(attacker.cardId, attackerPlayer);
+  const targetCard = getBattleCard(actualTarget.cardId, defenderPlayer);
+  const atkStats = getEffectiveStats(attacker, attackerPlayer);
+  const defStats = getEffectiveStats(actualTarget, defenderPlayer);
+  damageUnit(actualTarget, defenderPlayer, atkStats.atk);
+  damageUnit(attacker, attackerPlayer, defStats.atk);
+  attacker.canAttack = false;
+  battle.log.push(`${attackerPlayer.name}の${attackerCard.name}がオートで${targetCard.name}を攻撃しました。`);
+  resolveCharacterEffect(battle, attackerPlayer, defenderPlayer, attackerCard, "attack", attacker, atkStats.atk);
+  destroyDefeatedUnits(battle, attackerPlayer, defenderPlayer);
+  setFx("attack", "オート攻撃", `${attackerCard.name} -> ${targetCard.name}`, attackerCard.rarity || "N");
+  checkBattleEnd(battle);
+}
+
+function autoAttackPlayer(battle, attackerIndex, attacker) {
+  const attackerPlayer = battle.players[attackerIndex];
+  const defenderPlayer = battle.players[1 - attackerIndex];
+  if (!attacker || !attacker.canAttack) return;
+  const card = getBattleCard(attacker.cardId, attackerPlayer);
+  const damage = getEffectiveStats(attacker, attackerPlayer).atk;
+  defenderPlayer.hp -= damage;
+  attacker.canAttack = false;
+  battle.log.push(`${attackerPlayer.name}の${card.name}がオートで直接攻撃し、${damage}ダメージを与えました。`);
+  resolveCharacterEffect(battle, attackerPlayer, defenderPlayer, card, "attack", attacker, damage);
+  setFx("attack", "オート直接攻撃", `${card.name} / ${damage}ダメージ`, card.rarity || "N");
+  checkBattleEnd(battle);
 }
 
 function runAiTurn() {
@@ -4005,12 +4743,13 @@ function runAiTurn() {
   battle.log.push("AIがターンエンドしました。");
   startTurn(battle, 0);
   render();
+  maybeScheduleAutoBattle();
 }
 
 function tryAiUseSpell(battle) {
   const ai = battle.players[battle.aiPlayer];
   const playable = ai.hand
-    .map((handCard, index) => ({ handCard, index, card: getCard(handCard.cardId) }))
+    .map((handCard, index) => ({ handCard, index, card: getBattleCard(handCard.cardId, ai) }))
     .filter((entry) => entry.card?.type === "spell" && entry.card.cost <= ai.currentCost);
 
   const maxCostSpell = playable.find((entry) => entry.card.spell.effect === "maxCost");
@@ -4032,7 +4771,7 @@ function tryAiSummon(battle) {
   const ai = battle.players[battle.aiPlayer];
   if (ai.field.length >= FIELD_LIMIT) return false;
   const candidates = ai.hand
-    .map((handCard, index) => ({ handCard, index, card: getCard(handCard.cardId) }))
+    .map((handCard, index) => ({ handCard, index, card: getBattleCard(handCard.cardId, ai) }))
     .filter((entry) => entry.card?.type === "character" && entry.card.cost <= ai.currentCost)
     .sort((a, b) => aiCardScore(b.card) - aiCardScore(a.card));
   if (!candidates.length) return false;
@@ -4043,7 +4782,7 @@ function tryAiLevelUp(battle) {
   const ai = battle.players[battle.aiPlayer];
   if (ai.currentCost < 1 || ai.hand.length < 4 || ai.level >= LEVEL_FOR_MULTIPLIER_CAP) return false;
   const candidates = ai.hand
-    .map((handCard, index) => ({ handCard, index, card: getCard(handCard.cardId) }))
+    .map((handCard, index) => ({ handCard, index, card: getBattleCard(handCard.cardId, ai) }))
     .filter((entry) => entry.card && entry.card.cost <= ai.currentCost)
     .sort((a, b) => b.card.cost - a.card.cost);
   if (!candidates.length) return false;
@@ -4053,7 +4792,7 @@ function tryAiLevelUp(battle) {
 function aiPlayHandIndex(battle, handIndex) {
   const ai = battle.players[battle.aiPlayer];
   const handCard = ai.hand[handIndex];
-  const card = getCard(handCard?.cardId);
+  const card = getBattleCard(handCard?.cardId, ai);
   if (!card || ai.currentCost < card.cost) return false;
 
   if (card.type === "character") {
@@ -4086,7 +4825,7 @@ function aiPlayHandIndex(battle, handIndex) {
 function aiSendHandIndexToGrave(battle, handIndex) {
   const ai = battle.players[battle.aiPlayer];
   const handCard = ai.hand[handIndex];
-  const card = getCard(handCard?.cardId);
+  const card = getBattleCard(handCard?.cardId, ai);
   if (!card || ai.currentCost < card.cost) return false;
   ai.currentCost -= card.cost;
   ai.hand.splice(handIndex, 1);
@@ -4114,23 +4853,17 @@ function aiAttackAll(battle) {
 
 function chooseAiAttackTarget(battle, attacker) {
   const human = battle.players[0];
-  const blockers = human.field.filter((unit) => getCard(unit.cardId).abilities?.includes("block"));
+  const blockers = human.field.filter((unit) => getBattleCard(unit.cardId, human).abilities?.includes("block"));
   if (blockers.length) return blockers[0];
 
   const ai = battle.players[battle.aiPlayer];
-  const attackerCard = getCard(attacker.cardId);
   const attackerAtk = getEffectiveStats(attacker, ai).atk;
   return [...human.field].sort((a, b) => {
-    const aCard = getCard(a.cardId);
-    const bCard = getCard(b.cardId);
     const aStats = getEffectiveStats(a, human);
     const bStats = getEffectiveStats(b, human);
-    const aDamage = getAttributeBattleDamage(attackerAtk, attackerCard, aCard);
-    const bDamage = getAttributeBattleDamage(attackerAtk, attackerCard, bCard);
-    const aKillable = aDamage >= aStats.def ? 1 : 0;
-    const bKillable = bDamage >= bStats.def ? 1 : 0;
+    const aKillable = attackerAtk >= aStats.def ? 1 : 0;
+    const bKillable = attackerAtk >= bStats.def ? 1 : 0;
     if (aKillable !== bKillable) return bKillable - aKillable;
-    if (aDamage !== bDamage) return bDamage - aDamage;
     if (aStats.atk !== bStats.atk) return bStats.atk - aStats.atk;
     return aStats.def - bStats.def;
   })[0];
@@ -4144,23 +4877,21 @@ function aiAttackCard(battle, attacker, target) {
   let actualTarget = target;
   const blocker = findBlocker(human, target.uid);
   if (blocker && blocker.uid !== target.uid) {
-    battle.log.push(`ブロックによりAIの攻撃対象が${getCard(blocker.cardId).name}へ変更されました。`);
+    battle.log.push(`ブロックによりAIの攻撃対象が${getBattleCard(blocker.cardId, human).name}へ変更されました。`);
     actualTarget = blocker;
   }
 
-  const attackerCard = getCard(attacker.cardId);
-  const targetCard = getCard(actualTarget.cardId);
+  const attackerCard = getBattleCard(attacker.cardId, ai);
+  const targetCard = getBattleCard(actualTarget.cardId, human);
   const atkStats = getEffectiveStats(attacker, ai);
   const defStats = getEffectiveStats(actualTarget, human);
-  const attackDamage = getAttributeBattleDamage(atkStats.atk, attackerCard, targetCard);
-  const counterDamage = getAttributeBattleDamage(defStats.atk, targetCard, attackerCard);
-  damageUnit(actualTarget, human, attackDamage);
-  damageUnit(attacker, ai, counterDamage);
+  damageUnit(actualTarget, human, atkStats.atk);
+  damageUnit(attacker, ai, defStats.atk);
   attacker.canAttack = false;
-  battle.log.push(`AIの${attackerCard.name}が${targetCard.name}を攻撃しました。${targetCard.name}へ${attackDamage}ダメージ（${attributeMatchupShortText(attackerCard, targetCard)}）、反撃で${counterDamage}ダメージ（${attributeMatchupShortText(targetCard, attackerCard)}）。`);
+  battle.log.push(`AIの${attackerCard.name}が${targetCard.name}を攻撃しました。`);
   resolveCharacterEffect(battle, ai, human, attackerCard, "attack", attacker, atkStats.atk);
   destroyDefeatedUnits(battle, ai, human);
-  setFx("attack", "AI攻撃", `${attackerCard.name} → ${targetCard.name} / ${attributeMatchupShortText(attackerCard, targetCard)}`, attackerCard.rarity || "N");
+  setFx("attack", "AI攻撃", `${attackerCard.name} → ${targetCard.name}`, attackerCard.rarity || "N");
   checkBattleEnd(battle);
 }
 
@@ -4168,7 +4899,7 @@ function aiAttackPlayer(battle, attacker) {
   const ai = battle.players[battle.aiPlayer];
   const human = battle.players[0];
   if (!attacker || !attacker.canAttack) return;
-  const card = getCard(attacker.cardId);
+  const card = getBattleCard(attacker.cardId, ai);
   const damage = getEffectiveStats(attacker, ai).atk;
   human.hp -= damage;
   attacker.canAttack = false;
@@ -4193,7 +4924,7 @@ function isCpuBattleMode(mode) {
 }
 
 function findBlocker(player, targetUid) {
-  const blockers = player.field.filter((unit) => getCard(unit.cardId).abilities?.includes("block"));
+  const blockers = player.field.filter((unit) => getBattleCard(unit.cardId, player).abilities?.includes("block"));
   if (!blockers.length) return null;
   if (blockers.some((unit) => unit.uid === targetUid)) return null;
   return blockers[0];
@@ -4227,6 +4958,7 @@ function grantBattleReward(battle) {
     battle.rewardGranted = true;
     state.gachaBalls += reward;
     saveGachaBalls();
+    addDailyMissionProgress("aiBattleComplete", 1);
     battle.log.push(`${GACHA_BALL_NAME}を${reward}個入手しました。`);
     return;
   }
@@ -4248,6 +4980,7 @@ function grantBattleReward(battle) {
       saveQuestClears();
       saveGachaBalls();
     }
+    addDailyMissionProgress("questWin", 1);
     saveGold();
     battle.log.push(`${stage.id}を${firstClear ? "初クリア" : "再クリア"}しました。${GOLD_NAME}を${reward}入手しました。${firstClear ? `${GACHA_BALL_NAME}を${QUEST_FIRST_CLEAR_GACHA_BALL_REWARD}個入手しました。` : ""}`);
   }
@@ -4257,7 +4990,7 @@ function isBattleActive() {
   return state.battle && state.battle.phase === "battle";
 }
 
-function createPlayer(name, deck) {
+function createPlayer(name, deck, cardUpgrades = {}) {
   return {
     name,
     hp: MAX_HP,
@@ -4269,16 +5002,199 @@ function createPlayer(name, deck) {
     deck,
     hand: [],
     field: [],
-    grave: []
+    grave: [],
+    cardUpgrades: normalizeCardUpgrades(cardUpgrades)
   };
 }
 
-function getCards() {
+function getBaseCards() {
   return [...DEFAULT_CARDS, ...SET_2_CARDS, ...state.customCards];
 }
 
+function getBaseCard(cardId) {
+  return getBaseCards().find((card) => card.id === cardId);
+}
+
+function getCards() {
+  return getBaseCards().map((card) => applyCardUpgrade(card, state.cardUpgrades));
+}
+
 function getCard(cardId) {
-  return getCards().find((card) => card.id === cardId);
+  const card = getBaseCard(cardId);
+  return card ? applyCardUpgrade(card, state.cardUpgrades) : undefined;
+}
+
+function getBattleCard(cardId, player) {
+  const card = getBaseCard(cardId);
+  return card ? applyCardUpgrade(card, player?.cardUpgrades || {}) : undefined;
+}
+
+function applyCardUpgrade(card, upgrades = state.cardUpgrades) {
+  if (!card) return card;
+  const upgrade = normalizeCardUpgrade(upgrades?.[card.id]);
+  const upgraded = {
+    ...card,
+    abilities: Array.isArray(card.abilities) ? [...card.abilities] : [],
+    spell: card.spell ? { ...card.spell } : undefined,
+    upgrade
+  };
+  if (upgrade.evolution > 0) {
+    upgraded.rarity = bumpRarity(card.rarity || "N", upgrade.evolution);
+  }
+  if (card.type === "character") {
+    upgraded.atk = Math.max(0, Math.ceil((card.atk || 0) + upgrade.level + upgrade.evolution * 5));
+    upgraded.def = Math.max(0, Math.ceil((card.def || 0) + upgrade.level * 2 + upgrade.evolution * 10));
+  } else if (upgraded.spell) {
+    const spellBoost = Math.floor(upgrade.level / 5) + upgrade.evolution;
+    if (upgraded.spell.effect === "heal") {
+      upgraded.spell.value = Math.max(1, (card.spell.value || 1) + upgrade.level * 2 + upgrade.evolution * 10);
+    } else if (upgraded.spell.effect === "maxCost") {
+      upgraded.spell.value = Math.max(1, (card.spell.value || 1) + Math.floor(upgrade.evolution / 2));
+    } else {
+      upgraded.spell.value = Math.max(1, (card.spell.value || 1) + spellBoost);
+    }
+  }
+  return upgraded;
+}
+
+function bumpRarity(rarity, amount) {
+  const index = Math.max(0, RARITY_ORDER.indexOf(rarity || "N"));
+  return RARITY_ORDER[Math.min(RARITY_ORDER.length - 1, index + Math.max(0, amount))] || "N";
+}
+
+function normalizeCardUpgrade(upgrade) {
+  if (!upgrade || typeof upgrade !== "object") return { level: 0, evolution: 0 };
+  return {
+    level: clampInteger(upgrade.level, 0, CARD_MAX_ENHANCE_LEVEL),
+    evolution: clampInteger(upgrade.evolution, 0, CARD_MAX_EVOLUTION)
+  };
+}
+
+function normalizeCardUpgrades(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value)
+    .filter(([cardId]) => typeof cardId === "string" && cardId)
+    .map(([cardId, upgrade]) => [cardId, normalizeCardUpgrade(upgrade)])
+    .filter(([, upgrade]) => upgrade.level > 0 || upgrade.evolution > 0));
+}
+
+function getCardUpgrade(cardId) {
+  return normalizeCardUpgrade(state.cardUpgrades[cardId]);
+}
+
+function cardUpgradeEffectText(card, upgrade = getCardUpgrade(card.id)) {
+  if (card.type === "character") {
+    const atk = upgrade.level + upgrade.evolution * 5;
+    const def = upgrade.level * 2 + upgrade.evolution * 10;
+    return `攻撃+${atk} / 防御+${def} / 表示ランク${bumpRarity(getBaseCard(card.id)?.rarity || card.rarity || "N", upgrade.evolution)}`;
+  }
+  if (card.spell?.effect === "heal") return `回復量+${upgrade.level * 2 + upgrade.evolution * 10}`;
+  if (card.spell?.effect === "maxCost") return `進化2以上で最大コスト増加量+1`;
+  return `効果値+${Math.floor(upgrade.level / 5) + upgrade.evolution}`;
+}
+
+function getUpgradeRarityMultiplier(card) {
+  return RARITY_COST_MULTIPLIER[getBaseCard(card.id)?.rarity || card.rarity || "N"] || 1;
+}
+
+function getEnhanceCost(card, upgrade = getCardUpgrade(card.id)) {
+  const nextLevel = Math.min(CARD_MAX_ENHANCE_LEVEL, upgrade.level + 1);
+  const multiplier = getUpgradeRarityMultiplier(card) * (1 + upgrade.evolution * 0.45);
+  return {
+    cards: 1,
+    gold: Math.ceil((25 + nextLevel * 18) * multiplier)
+  };
+}
+
+function getEvolutionCost(card, upgrade = getCardUpgrade(card.id)) {
+  const multiplier = getUpgradeRarityMultiplier(card);
+  return {
+    cards: 2 + upgrade.evolution,
+    gold: Math.ceil((420 + upgrade.evolution * 360) * multiplier)
+  };
+}
+
+function getUpgradeableSpareCount(cardId) {
+  return Math.max(0, getOwnedCount(cardId) - Math.max(1, getReservedDeckCount(cardId)));
+}
+
+function canEnhanceCard(cardId) {
+  const card = getCard(cardId);
+  if (!card) return false;
+  const upgrade = getCardUpgrade(cardId);
+  if (upgrade.level >= CARD_MAX_ENHANCE_LEVEL) return false;
+  const cost = getEnhanceCost(card, upgrade);
+  return state.gold >= cost.gold && getUpgradeableSpareCount(cardId) >= cost.cards;
+}
+
+function canEvolveCard(cardId) {
+  const card = getCard(cardId);
+  if (!card) return false;
+  const upgrade = getCardUpgrade(cardId);
+  if (upgrade.level < CARD_MAX_ENHANCE_LEVEL || upgrade.evolution >= CARD_MAX_EVOLUTION) return false;
+  const cost = getEvolutionCost(card, upgrade);
+  return state.gold >= cost.gold && getUpgradeableSpareCount(cardId) >= cost.cards;
+}
+
+function enhanceCard(cardId) {
+  const card = getCard(cardId);
+  if (!card) return;
+  const upgrade = getCardUpgrade(cardId);
+  if (upgrade.level >= CARD_MAX_ENHANCE_LEVEL) {
+    showToast("これ以上強化できません。進化を目指しましょう。");
+    return;
+  }
+  const cost = getEnhanceCost(card, upgrade);
+  if (state.gold < cost.gold || getUpgradeableSpareCount(cardId) < cost.cards) {
+    showToast("強化に必要な素材かゴールドが足りません。");
+    return;
+  }
+  consumeUpgradeCost(cardId, cost);
+  state.cardUpgrades[cardId] = {
+    ...upgrade,
+    level: upgrade.level + 1
+  };
+  saveCardUpgrades();
+  addDailyMissionProgress("cardUpgrade", 1);
+  setFx("create", "カード強化", `${card.name} +${upgrade.level + 1}`, card.rarity || "N");
+  showToast(`${card.name}を+${upgrade.level + 1}に強化しました。`);
+  render();
+}
+
+function evolveCard(cardId) {
+  const card = getCard(cardId);
+  if (!card) return;
+  const upgrade = getCardUpgrade(cardId);
+  if (upgrade.level < CARD_MAX_ENHANCE_LEVEL) {
+    showToast(`進化には強化+${CARD_MAX_ENHANCE_LEVEL}が必要です。`);
+    return;
+  }
+  if (upgrade.evolution >= CARD_MAX_EVOLUTION) {
+    showToast("これ以上進化できません。");
+    return;
+  }
+  const cost = getEvolutionCost(card, upgrade);
+  if (state.gold < cost.gold || getUpgradeableSpareCount(cardId) < cost.cards) {
+    showToast("進化に必要な素材かゴールドが足りません。");
+    return;
+  }
+  consumeUpgradeCost(cardId, cost);
+  state.cardUpgrades[cardId] = {
+    ...upgrade,
+    evolution: upgrade.evolution + 1
+  };
+  saveCardUpgrades();
+  setFx("create", "カード進化", `${card.name} 進化${upgrade.evolution + 1}`, bumpRarity(card.rarity || "N", 1));
+  showToast(`${card.name}が進化${upgrade.evolution + 1}になりました。`);
+  render();
+}
+
+function consumeUpgradeCost(cardId, cost) {
+  state.inventory[cardId] = getOwnedCount(cardId) - cost.cards;
+  if (state.inventory[cardId] <= 0) delete state.inventory[cardId];
+  state.gold -= cost.gold;
+  saveInventory();
+  saveGold();
 }
 
 function getMarketBaseCards() {
@@ -4310,6 +5226,615 @@ function getDailyAuctionListings() {
     });
 }
 
+function getVisibleAuctionListings(npcListings = getDailyAuctionListings()) {
+  const npc = npcListings.map((listing) => ({ ...listing, source: "npc" }));
+  const user = getUserAuctionListings();
+  return [...user, ...npc];
+}
+
+function getUserAuctionListings() {
+  const currentUid = state.cloud.user?.uid || "";
+  return Object.values(state.auctions.docs)
+    .filter((auction) => auction?.kind === "user")
+    .filter((auction) => getCard(auction.cardId))
+    .filter((auction) => {
+      const status = getAuctionStatus(auction);
+      if (status === "active") return true;
+      if (status === "ended") return auction.sellerUid === currentUid || auction.highestBidderUid === currentUid;
+      if (status === "overdue") return auction.sellerUid === currentUid || auction.highestBidderUid === currentUid;
+      if (status === "expired") return auction.sellerUid === currentUid;
+      return auction.sellerUid === currentUid && !auction.sellerPaid;
+    })
+    .sort((a, b) => (a.endAtMs || 0) - (b.endAtMs || 0))
+    .map((auction) => ({
+      id: auction.id,
+      cardId: auction.cardId,
+      price: auction.startPrice,
+      source: "user"
+    }));
+}
+
+function getMyAuctionSummary() {
+  const uid = state.cloud.user?.uid || "";
+  if (!uid) return { selling: [], bidding: [], refunds: [], history: [] };
+  const all = Object.values(state.auctions.docs)
+    .filter((auction) => auction?.id && getCard(auction.cardId))
+    .sort((a, b) => (b.updatedAtMs || b.createdAtMs || 0) - (a.updatedAtMs || a.createdAtMs || 0));
+  const selling = all
+    .filter((auction) => auction.kind === "user" && auction.sellerUid === uid)
+    .filter((auction) => ["active", "ended", "overdue", "expired", "claimed"].includes(getAuctionStatus(auction)) && !auction.sellerPaid)
+    .slice(0, 5);
+  const bidding = all
+    .filter((auction) => auction.highestBidderUid === uid)
+    .filter((auction) => ["active", "ended", "overdue"].includes(getAuctionStatus(auction)))
+    .slice(0, 5);
+  const refunds = all
+    .filter((auction) => getAuctionRefundAmount(auction, uid) > 0)
+    .slice(0, 5);
+  const history = all
+    .filter((auction) => auction.sellerUid === uid || auction.highestBidderUid === uid || auction.claimedByUid === uid)
+    .filter((auction) => ["claimed", "cancelled", "forfeited"].includes(getAuctionStatus(auction)) || auction.sellerPaid)
+    .slice(0, 6);
+  return { selling, bidding, refunds, history };
+}
+
+function findAuctionListing(listingId) {
+  return getVisibleAuctionListings(getDailyAuctionListings()).find((entry) => entry.id === listingId)
+    || getDailyAuctionListings().find((entry) => entry.id === listingId)
+    || (state.auctions.docs[listingId] ? {
+      id: listingId,
+      cardId: state.auctions.docs[listingId].cardId,
+      price: state.auctions.docs[listingId].startPrice,
+      source: state.auctions.docs[listingId].kind || "user"
+    } : null);
+}
+
+function ensureAuctionFeed(listings = getDailyAuctionListings()) {
+  if (!cloudApi || !state.cloud.configured) {
+    state.auctions.message = "オークションにはFirebase設定が必要です。";
+    return;
+  }
+  if (!state.cloud.user) {
+    unsubscribeAuctionFeed();
+    state.auctions.message = "オークション入札にはGoogleログインが必要です。";
+    return;
+  }
+  if (!cloudApi.onSnapshot || !cloudApi.runTransaction || !cloudApi.collection || !cloudApi.query || !cloudApi.where) {
+    state.auctions.message = "Firebase SDKの読み込みが古い可能性があります。最新版を反映してください。";
+    return;
+  }
+
+  const feedKey = listings.map((listing) => listing.id).join("|");
+  if (state.auctions.feedKey === feedKey && state.auctions.unsubscribers.length) return;
+
+  unsubscribeAuctionFeed();
+  state.auctions.feedKey = feedKey;
+  state.auctions.message = "";
+  listings.forEach((listing) => {
+    seedAuctionDoc(listing).catch((error) => {
+      state.auctions.message = `オークション準備に失敗しました。${formatCloudError(error)}`;
+      if (state.screen === "market") render();
+    });
+    const unsubscribe = cloudApi.onSnapshot(getAuctionRef(listing.id), (snapshot) => {
+      if (snapshot.exists()) {
+        state.auctions.docs[listing.id] = normalizeAuctionDoc(snapshot.data(), listing);
+      } else {
+        state.auctions.docs[listing.id] = createAuctionDoc(listing);
+      }
+      if (state.screen === "market") render();
+    }, (error) => {
+      state.auctions.message = `オークション同期に失敗しました。${formatCloudError(error)}`;
+      if (state.screen === "market") render();
+    });
+    state.auctions.unsubscribers.push(unsubscribe);
+  });
+  subscribeUserAuctions();
+}
+
+function unsubscribeAuctionFeed() {
+  state.auctions.unsubscribers.forEach((unsubscribe) => {
+    if (typeof unsubscribe === "function") unsubscribe();
+  });
+  state.auctions.unsubscribers = [];
+  state.auctions.feedKey = "";
+  if (typeof state.auctions.userUnsubscribe === "function") {
+    state.auctions.userUnsubscribe();
+  }
+  state.auctions.userUnsubscribe = null;
+  state.auctions.userFeedReady = false;
+}
+
+function subscribeUserAuctions() {
+  if (state.auctions.userFeedReady || !cloudApi?.collection || !cloudApi?.query || !cloudApi?.where) return;
+  const auctionQuery = cloudApi.query(
+    cloudApi.collection(cloudApi.db, "auctions"),
+    cloudApi.where("kind", "==", "user")
+  );
+  state.auctions.userUnsubscribe = cloudApi.onSnapshot(auctionQuery, (snapshot) => {
+    snapshot.forEach((docSnapshot) => {
+      const data = docSnapshot.data();
+      const normalized = normalizeAuctionDoc({ ...data, id: data.id || docSnapshot.id });
+      state.auctions.docs[normalized.id] = normalized;
+    });
+    state.auctions.userFeedReady = true;
+    if (state.screen === "market") render();
+  }, (error) => {
+    state.auctions.message = `ユーザー出品の同期に失敗しました。${formatCloudError(error)}`;
+    if (state.screen === "market") render();
+  });
+  state.auctions.userFeedReady = true;
+}
+
+function getAuctionRef(listingId) {
+  return cloudApi.doc(cloudApi.db, "auctions", listingId);
+}
+
+function createAuctionDoc(listing, now = Date.now()) {
+  return {
+    id: listing.id,
+    kind: listing.source === "user" ? "user" : "npc",
+    cardId: listing.cardId,
+    startPrice: listing.price,
+    highestBid: 0,
+    highestBidderUid: "",
+    highestBidderName: "",
+    sellerUid: listing.sellerUid || "npc",
+    sellerName: listing.sellerName || "NPC",
+    sellerPaid: false,
+    refunds: {},
+    endAtMs: now + AUCTION_BASE_DURATION_MS,
+    status: "active",
+    claimedByUid: "",
+    claimedAtMs: 0,
+    createdAtMs: now,
+    updatedAtMs: now
+};
+}
+
+function normalizeAuctionDoc(data, listing) {
+  const safeListing = listing || {
+    id: typeof data?.id === "string" ? data.id : createUid("auction"),
+    cardId: typeof data?.cardId === "string" ? data.cardId : "",
+    price: Math.max(1, clampInteger(data?.startPrice, 1, 99999999)),
+    source: data?.kind === "user" ? "user" : "npc",
+    sellerUid: typeof data?.sellerUid === "string" ? data.sellerUid : "npc",
+    sellerName: typeof data?.sellerName === "string" ? data.sellerName : "NPC"
+  };
+  const fallback = createAuctionDoc(safeListing);
+  const kind = data?.kind === "user" ? "user" : "npc";
+  return {
+    ...fallback,
+    ...data,
+    id: typeof data?.id === "string" ? data.id : fallback.id,
+    kind,
+    cardId: typeof data?.cardId === "string" ? data.cardId : fallback.cardId,
+    startPrice: Math.max(1, clampInteger(data?.startPrice ?? fallback.startPrice, 1, 99999999)),
+    highestBid: Math.max(0, clampInteger(data?.highestBid, 0, 99999999)),
+    highestBidderUid: typeof data?.highestBidderUid === "string" ? data.highestBidderUid : "",
+    highestBidderName: typeof data?.highestBidderName === "string" ? data.highestBidderName : "",
+    sellerUid: typeof data?.sellerUid === "string" ? data.sellerUid : fallback.sellerUid,
+    sellerName: typeof data?.sellerName === "string" ? data.sellerName : fallback.sellerName,
+    sellerPaid: Boolean(data?.sellerPaid),
+    refunds: normalizeAuctionRefunds(data?.refunds),
+    endAtMs: Math.max(0, clampInteger(data?.endAtMs ?? fallback.endAtMs, 0, 9999999999999)),
+    status: ["active", "claimed", "cancelled", "forfeited"].includes(data?.status) ? data.status : "active",
+    claimedByUid: typeof data?.claimedByUid === "string" ? data.claimedByUid : "",
+    claimedAtMs: Math.max(0, clampInteger(data?.claimedAtMs, 0, 9999999999999)),
+    createdAtMs: Math.max(0, clampInteger(data?.createdAtMs ?? fallback.createdAtMs, 0, 9999999999999)),
+    updatedAtMs: Math.max(0, clampInteger(data?.updatedAtMs ?? fallback.updatedAtMs, 0, 9999999999999))
+  };
+}
+
+async function seedAuctionDoc(listing) {
+  await cloudApi.runTransaction(cloudApi.db, async (transaction) => {
+    const ref = getAuctionRef(listing.id);
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists()) {
+      transaction.set(ref, {
+        ...createAuctionDoc(listing),
+        createdAt: cloudApi.serverTimestamp(),
+        updatedAt: cloudApi.serverTimestamp()
+      });
+    }
+  });
+}
+
+function getAuctionDoc(listing) {
+  return state.auctions.docs[listing.id] || createAuctionDoc(listing);
+}
+
+function normalizeAuctionRefunds(refunds) {
+  if (!refunds || typeof refunds !== "object" || Array.isArray(refunds)) return {};
+  return Object.fromEntries(Object.entries(refunds)
+    .filter(([uid]) => typeof uid === "string" && uid)
+    .map(([uid, amount]) => [uid, Math.max(0, clampInteger(amount, 0, 99999999))])
+    .filter(([, amount]) => amount > 0));
+}
+
+function getAuctionRefundAmount(auction, uid) {
+  if (!uid) return 0;
+  return Math.max(0, clampInteger(auction?.refunds?.[uid] || 0, 0, 99999999));
+}
+
+function getDefaultAuctionStartPrice(card) {
+  return Math.max(10, Math.ceil(calculateMarketCardPrice(card) * 0.7));
+}
+
+function getSellableCount(cardId) {
+  return Math.max(0, getOwnedCount(cardId) - getReservedDeckCount(cardId));
+}
+
+function getReservedDeckCount(cardId) {
+  const activeCount = state.deckIds.filter((id) => id === cardId).length;
+  const deckCounts = state.decks.map((deck) => sanitizeDeck(deck.deckIds).filter((id) => id === cardId).length);
+  return Math.max(activeCount, ...deckCounts, 0);
+}
+
+function getAuctionStatus(auction, now = Date.now()) {
+  if (["claimed", "cancelled", "forfeited"].includes(auction.status)) return auction.status;
+  if (auction.highestBidderUid && now >= auction.endAtMs + AUCTION_CLAIM_GRACE_MS) return "overdue";
+  if (now >= auction.endAtMs) return auction.highestBidderUid ? "ended" : "expired";
+  return "active";
+}
+
+function getMinimumAuctionBid(auction) {
+  return (auction.highestBid || 0) > 0
+    ? auction.highestBid + AUCTION_MIN_BID_INCREMENT
+    : auction.startPrice;
+}
+
+function auctionStatusText(auction, status = getAuctionStatus(auction)) {
+  if (status === "active") return "入札受付中";
+  if (status === "ended") return "終了・落札待ち";
+  if (status === "overdue") return "受け取り期限切れ";
+  if (status === "claimed") return "受け取り済み";
+  if (status === "cancelled") return "取り消し済み";
+  if (status === "forfeited") return "落札不成立";
+  return "入札なし終了";
+}
+
+function formatAuctionRemaining(endAtMs) {
+  const remaining = Math.max(0, endAtMs - Date.now());
+  if (remaining <= 0) return "終了";
+  const totalMinutes = Math.ceil(remaining / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours > 0 ? `${hours}時間${minutes}分` : `${minutes}分`;
+}
+
+function getAuctionBidderName() {
+  return getPlayerDisplayName(state.cloud.user) || "入札者";
+}
+
+async function placeAuctionBid(listingId) {
+  const listing = findAuctionListing(listingId);
+  if (!listing) {
+    showToast("このオークションは見つかりませんでした。");
+    return;
+  }
+  if (!cloudApi || !state.cloud.user) {
+    showToast("入札にはGoogleログインが必要です。");
+    state.screen = "market";
+    render();
+    return;
+  }
+  const bidAmount = clampInteger(state.auctions.bidInputs[listing.id] || 0, 0, 99999999);
+  if (state.gold < bidAmount) {
+    showToast(`${GOLD_NAME}が足りません。`);
+    return;
+  }
+
+  state.auctions.busy = true;
+  state.auctions.message = "入札を送信しています。";
+  render();
+
+  try {
+    await cloudApi.runTransaction(cloudApi.db, async (transaction) => {
+      const ref = getAuctionRef(listing.id);
+      const snapshot = await transaction.get(ref);
+      const auction = snapshot.exists()
+        ? normalizeAuctionDoc(snapshot.data(), listing)
+        : createAuctionDoc(listing);
+      const now = Date.now();
+      const status = getAuctionStatus(auction, now);
+      if (status !== "active") throw new Error("このオークションは終了しています。");
+      if (auction.sellerUid === state.cloud.user.uid) throw new Error("自分の出品には入札できません。");
+      if (auction.highestBidderUid === state.cloud.user.uid) throw new Error("現在あなたが最高入札者です。");
+      const minimumBid = getMinimumAuctionBid(auction);
+      if (bidAmount < minimumBid) throw new Error(`最低入札額は${minimumBid}${GOLD_NAME}です。`);
+      const refunds = { ...auction.refunds };
+      if (auction.highestBidderUid && auction.highestBidderUid !== state.cloud.user.uid && auction.highestBid > 0) {
+        refunds[auction.highestBidderUid] = Math.max(0, clampInteger(refunds[auction.highestBidderUid] || 0, 0, 99999999)) + auction.highestBid;
+      }
+      const endAtMs = auction.endAtMs - now <= AUCTION_EXTENSION_MS
+        ? now + AUCTION_EXTENSION_MS
+        : auction.endAtMs;
+      transaction.set(ref, {
+        ...auction,
+        highestBid: bidAmount,
+        highestBidderUid: state.cloud.user.uid,
+        highestBidderName: getAuctionBidderName(),
+        refunds,
+        endAtMs,
+        status: "active",
+        updatedAtMs: now,
+        updatedAt: cloudApi.serverTimestamp()
+      }, { merge: true });
+    });
+    state.gold -= bidAmount;
+    saveGold();
+    state.auctions.message = `${GOLD_NAME} ${bidAmount}を預けて入札しました。`;
+    showToast("入札しました。ゴールドを預かりました。");
+  } catch (error) {
+    state.auctions.message = error?.message || "入札に失敗しました。";
+    showToast(state.auctions.message);
+  } finally {
+    state.auctions.busy = false;
+    render();
+  }
+}
+
+async function claimAuctionCard(listingId) {
+  const listing = findAuctionListing(listingId);
+  if (!listing || !cloudApi || !state.cloud.user) return;
+  const card = getCard(listing.cardId);
+  if (!card) return;
+
+  state.auctions.busy = true;
+  state.auctions.message = "落札カードを受け取っています。";
+  render();
+
+  try {
+    let paidAmount = 0;
+    await cloudApi.runTransaction(cloudApi.db, async (transaction) => {
+      const ref = getAuctionRef(listing.id);
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists()) throw new Error("このオークションは見つかりませんでした。");
+      const latest = normalizeAuctionDoc(snapshot.data(), listing);
+      const status = getAuctionStatus(latest);
+      if (!["ended", "overdue"].includes(status)) throw new Error("まだ受け取りできません。");
+      if (latest.highestBidderUid !== state.cloud.user.uid) throw new Error("あなたは最高入札者ではありません。");
+      paidAmount = latest.highestBid;
+      transaction.set(ref, {
+        status: "claimed",
+        claimedByUid: state.cloud.user.uid,
+        claimedAtMs: Date.now(),
+        updatedAtMs: Date.now(),
+        updatedAt: cloudApi.serverTimestamp()
+      }, { merge: true });
+    });
+    addInventory(card.id, 1);
+    saveInventory();
+    state.auctions.message = `${card.name}を落札しました。`;
+    setFx("auction", "落札成功", card.name, card.rarity || "N");
+    showToast(`${card.name}を受け取りました。預けた${GOLD_NAME} ${paidAmount}で支払い済みです。`);
+  } catch (error) {
+    state.auctions.message = error?.message || "受け取りに失敗しました。";
+    showToast(state.auctions.message);
+  } finally {
+    state.auctions.busy = false;
+    render();
+  }
+}
+
+async function claimAuctionRefund(listingId) {
+  const listing = findAuctionListing(listingId);
+  if (!listing || !cloudApi || !state.cloud.user) return;
+
+  state.auctions.busy = true;
+  state.auctions.message = "返金を受け取っています。";
+  render();
+
+  try {
+    let refund = 0;
+    await cloudApi.runTransaction(cloudApi.db, async (transaction) => {
+      const ref = getAuctionRef(listing.id);
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists()) throw new Error("オークションが見つかりません。");
+      const latest = normalizeAuctionDoc(snapshot.data(), listing);
+      const refunds = { ...latest.refunds };
+      refund = getAuctionRefundAmount(latest, state.cloud.user.uid);
+      if (refund <= 0) throw new Error("受け取れる返金はありません。");
+      delete refunds[state.cloud.user.uid];
+      transaction.set(ref, {
+        refunds,
+        updatedAtMs: Date.now(),
+        updatedAt: cloudApi.serverTimestamp()
+      }, { merge: true });
+    });
+    state.gold += refund;
+    saveGold();
+    state.auctions.message = `${GOLD_NAME} ${refund} を返金しました。`;
+    showToast(`返金 ${GOLD_NAME} ${refund} を受け取りました。`);
+  } catch (error) {
+    state.auctions.message = error?.message || "返金の受け取りに失敗しました。";
+    showToast(state.auctions.message);
+  } finally {
+    state.auctions.busy = false;
+    render();
+  }
+}
+
+async function createUserAuctionListing(cardId) {
+  const card = getCard(cardId);
+  if (!card) return;
+  if (!cloudApi || !state.cloud.user) {
+    showToast("出品にはGoogleログインが必要です。");
+    state.screen = "market";
+    render();
+    return;
+  }
+  if (getSellableCount(card.id) <= 0) {
+    showToast("山札に入っていない余りカードだけ出品できます。");
+    return;
+  }
+  const startPrice = Math.max(1, clampInteger(state.auctions.sellInputs[card.id] || getDefaultAuctionStartPrice(card), 1, 99999999));
+  const id = createUid(`user-auction-${state.cloud.user.uid.slice(0, 8)}`);
+  const now = Date.now();
+  const listing = {
+    id,
+    cardId: card.id,
+    price: startPrice,
+    source: "user",
+    sellerUid: state.cloud.user.uid,
+    sellerName: getAuctionBidderName()
+  };
+
+  state.auctions.busy = true;
+  state.auctions.message = "カードを出品しています。";
+  render();
+
+  try {
+    await cloudApi.setDoc(getAuctionRef(id), {
+      ...createAuctionDoc(listing, now),
+      createdAt: cloudApi.serverTimestamp(),
+      updatedAt: cloudApi.serverTimestamp()
+    });
+    state.inventory[card.id] = getOwnedCount(card.id) - 1;
+    if (state.inventory[card.id] <= 0) delete state.inventory[card.id];
+    saveInventory();
+    state.auctions.sellInputs[card.id] = getDefaultAuctionStartPrice(card);
+    state.auctions.message = `${card.name}をオークションに出品しました。`;
+    showToast(`${card.name}を出品しました。`);
+  } catch (error) {
+    state.auctions.message = error?.message || "出品に失敗しました。";
+    showToast(state.auctions.message);
+  } finally {
+    state.auctions.busy = false;
+    render();
+  }
+}
+
+async function forfeitAuctionListing(listingId) {
+  const listing = findAuctionListing(listingId);
+  if (!listing || !cloudApi || !state.cloud.user) return;
+  const card = getCard(listing.cardId);
+  if (!card) return;
+
+  state.auctions.busy = true;
+  state.auctions.message = "期限切れ処理をしています。";
+  render();
+
+  try {
+    await cloudApi.runTransaction(cloudApi.db, async (transaction) => {
+      const ref = getAuctionRef(listing.id);
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists()) throw new Error("出品が見つかりません。");
+      const latest = normalizeAuctionDoc(snapshot.data(), listing);
+      const status = getAuctionStatus(latest);
+      if (latest.kind !== "user") throw new Error("ユーザー出品だけ期限処理できます。");
+      if (latest.sellerUid !== state.cloud.user.uid) throw new Error("自分の出品だけ期限処理できます。");
+      if (status !== "overdue") throw new Error("まだ受け取り期限切れではありません。");
+      const refunds = { ...latest.refunds };
+      if (latest.highestBidderUid && latest.highestBid > 0) {
+        refunds[latest.highestBidderUid] = Math.max(0, clampInteger(refunds[latest.highestBidderUid] || 0, 0, 99999999)) + latest.highestBid;
+      }
+      transaction.set(ref, {
+        status: "forfeited",
+        sellerPaid: true,
+        refunds,
+        forfeitedAtMs: Date.now(),
+        updatedAtMs: Date.now(),
+        updatedAt: cloudApi.serverTimestamp()
+      }, { merge: true });
+    });
+    addInventory(card.id, 1);
+    saveInventory();
+    state.auctions.message = `${card.name}を手元に戻しました。`;
+    showToast("期限切れ処理を行い、カードを戻しました。");
+  } catch (error) {
+    state.auctions.message = error?.message || "期限切れ処理に失敗しました。";
+    showToast(state.auctions.message);
+  } finally {
+    state.auctions.busy = false;
+    render();
+  }
+}
+
+async function cancelAuctionListing(listingId) {
+  const listing = findAuctionListing(listingId);
+  if (!listing || !cloudApi || !state.cloud.user) return;
+  const card = getCard(listing.cardId);
+  if (!card) return;
+
+  state.auctions.busy = true;
+  state.auctions.message = "出品を取り消しています。";
+  render();
+
+  try {
+    await cloudApi.runTransaction(cloudApi.db, async (transaction) => {
+      const ref = getAuctionRef(listing.id);
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists()) throw new Error("出品が見つかりません。");
+      const latest = normalizeAuctionDoc(snapshot.data(), listing);
+      if (latest.kind !== "user") throw new Error("この出品は取り消せません。");
+      if (latest.sellerUid !== state.cloud.user.uid) throw new Error("自分の出品だけ取り消せます。");
+      if (latest.highestBid > 0) throw new Error("入札が入った出品は取り消せません。");
+      if (latest.status === "claimed") throw new Error("この出品はすでに完了しています。");
+      transaction.set(ref, {
+        status: "cancelled",
+        sellerPaid: true,
+        claimedByUid: state.cloud.user.uid,
+        claimedAtMs: Date.now(),
+        cancelledAtMs: Date.now(),
+        updatedAtMs: Date.now(),
+        updatedAt: cloudApi.serverTimestamp()
+      }, { merge: true });
+    });
+    addInventory(card.id, 1);
+    saveInventory();
+    state.auctions.message = `${card.name}の出品を取り消しました。`;
+    showToast("出品を取り消しました。");
+  } catch (error) {
+    state.auctions.message = error?.message || "出品の取り消しに失敗しました。";
+    showToast(state.auctions.message);
+  } finally {
+    state.auctions.busy = false;
+    render();
+  }
+}
+
+async function claimAuctionPayout(listingId) {
+  const listing = findAuctionListing(listingId);
+  if (!listing || !cloudApi || !state.cloud.user) return;
+
+  state.auctions.busy = true;
+  state.auctions.message = "売上を受け取っています。";
+  render();
+
+  try {
+    let payout = 0;
+    await cloudApi.runTransaction(cloudApi.db, async (transaction) => {
+      const ref = getAuctionRef(listing.id);
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists()) throw new Error("出品が見つかりません。");
+      const latest = normalizeAuctionDoc(snapshot.data(), listing);
+      if (latest.kind !== "user") throw new Error("この出品には売上がありません。");
+      if (latest.sellerUid !== state.cloud.user.uid) throw new Error("自分の出品の売上だけ受け取れます。");
+      if (latest.status !== "claimed" || !latest.claimedByUid) throw new Error("まだ取引が完了していません。");
+      if (latest.sellerPaid) throw new Error("売上は受け取り済みです。");
+      payout = latest.highestBid;
+      if (payout <= 0) throw new Error("受け取れる売上がありません。");
+      transaction.set(ref, {
+        sellerPaid: true,
+        sellerPaidAtMs: Date.now(),
+        updatedAtMs: Date.now(),
+        updatedAt: cloudApi.serverTimestamp()
+      }, { merge: true });
+    });
+    state.gold += payout;
+    saveGold();
+    state.auctions.message = `${GOLD_NAME} ${payout} を受け取りました。`;
+    showToast(`売上 ${GOLD_NAME} ${payout} を受け取りました。`);
+  } catch (error) {
+    state.auctions.message = error?.message || "売上の受け取りに失敗しました。";
+    showToast(state.auctions.message);
+  } finally {
+    state.auctions.busy = false;
+    render();
+  }
+}
+
 function calculateMarketCardPrice(card) {
   const rarityBase = { N: 70, R: 180, SR: 520, SSR: 1400, UR: 3600 };
   const rarity = card.rarity || "N";
@@ -4326,12 +5851,10 @@ function getSellPrice(card) {
 }
 
 function getSellableCards() {
-  const deckCounts = countDeckIds(state.deckIds);
   return sortCardsByRarity(getCards())
     .map((card) => {
       const owned = getOwnedCount(card.id);
-      const inDeck = deckCounts[card.id] || 0;
-      const sellable = Math.max(0, owned - inDeck);
+      const sellable = getSellableCount(card.id);
       return { card, sellable, price: getSellPrice(card) };
     })
     .filter((entry) => entry.sellable > 0);
@@ -4367,10 +5890,9 @@ function buyMarketListing(type, listingId) {
 function sellOwnedCard(cardId) {
   const card = getCard(cardId);
   if (!card) return;
-  const deckCount = state.deckIds.filter((id) => id === card.id).length;
   const owned = getOwnedCount(card.id);
-  if (owned <= deckCount) {
-    showToast("山札に入っている分は売却できません。");
+  if (getSellableCount(card.id) <= 0) {
+    showToast("デッキに必要な分は売却できません。");
     return;
   }
   const price = getSellPrice(card);
@@ -4734,7 +6256,7 @@ function getCardArtProfile(card) {
 }
 
 function getEffectiveStats(unit, owner) {
-  const card = getCard(unit.cardId);
+  const card = getBattleCard(unit.cardId, owner);
   const multiplier = levelMultiplier(owner.level);
   return {
     atk: Math.ceil(card.atk * multiplier),
@@ -4752,6 +6274,110 @@ function formatMultiplier(value) {
 
 function buildDefaultDeck() {
   return Object.entries(DEFAULT_DECK_COUNTS).flatMap(([cardId, count]) => Array.from({ length: count }, () => cardId));
+}
+
+function createDeckRecord(name, deckIds = []) {
+  return {
+    id: createUid("deck"),
+    name: String(name || "デッキ").slice(0, 24),
+    deckIds: sanitizeDeck(deckIds)
+  };
+}
+
+function initializeDecks() {
+  const legacyDeck = sanitizeDeck(readDeck());
+  state.decks = readDecks();
+  if (!state.decks.length) {
+    const firstDeck = legacyDeck.length ? legacyDeck : sanitizeDeck(buildDefaultDeck());
+    state.decks = [createDeckRecord("デッキ1", firstDeck)];
+  }
+  state.activeDeckId = readActiveDeckId();
+  if (!state.decks.some((deck) => deck.id === state.activeDeckId)) {
+    state.activeDeckId = state.decks[0].id;
+  }
+  syncActiveDeckToState();
+  saveDecks();
+  saveActiveDeckId();
+  saveDeck();
+}
+
+function getActiveDeck() {
+  return state.decks.find((deck) => deck.id === state.activeDeckId) || state.decks[0] || null;
+}
+
+function syncActiveDeckToState() {
+  const activeDeck = getActiveDeck();
+  state.deckIds = activeDeck ? sanitizeDeck(activeDeck.deckIds) : [];
+}
+
+function syncStateToActiveDeck() {
+  const activeDeck = getActiveDeck();
+  if (!activeDeck) return;
+  activeDeck.deckIds = sanitizeDeck(state.deckIds);
+}
+
+function selectDeck(deckId) {
+  const deck = state.decks.find((entry) => entry.id === deckId);
+  if (!deck) return;
+  syncStateToActiveDeck();
+  state.activeDeckId = deck.id;
+  syncActiveDeckToState();
+  saveDecks();
+  saveActiveDeckId();
+  localStorage.setItem(STORAGE_KEYS.deck, JSON.stringify(state.deckIds));
+  render();
+}
+
+function createNewDeck() {
+  syncStateToActiveDeck();
+  const deckNumber = state.decks.length + 1;
+  const newDeck = createDeckRecord(`デッキ${deckNumber}`, []);
+  state.decks.push(newDeck);
+  state.activeDeckId = newDeck.id;
+  state.deckIds = [];
+  saveDecks();
+  saveActiveDeckId();
+  saveDeck();
+  render();
+}
+
+function duplicateActiveDeck() {
+  const activeDeck = getActiveDeck();
+  if (!activeDeck) return;
+  syncStateToActiveDeck();
+  const copy = createDeckRecord(`${activeDeck.name} コピー`, activeDeck.deckIds);
+  state.decks.push(copy);
+  state.activeDeckId = copy.id;
+  syncActiveDeckToState();
+  saveDecks();
+  saveActiveDeckId();
+  saveDeck();
+  render();
+}
+
+function deleteActiveDeck() {
+  if (state.decks.length <= 1) {
+    showToast("最後のデッキは削除できません。");
+    return;
+  }
+  const activeDeck = getActiveDeck();
+  if (!activeDeck) return;
+  if (!window.confirm(`${activeDeck.name}を削除しますか？`)) return;
+  state.decks = state.decks.filter((deck) => deck.id !== activeDeck.id);
+  state.activeDeckId = state.decks[0].id;
+  syncActiveDeckToState();
+  saveDecks();
+  saveActiveDeckId();
+  saveDeck();
+  render();
+}
+
+function renameActiveDeck(name) {
+  const activeDeck = getActiveDeck();
+  if (!activeDeck) return;
+  const cleaned = String(name || "").trim().slice(0, 24);
+  activeDeck.name = cleaned || "デッキ";
+  saveDecks();
 }
 
 function countDeckIds(deckIds) {
@@ -4813,13 +6439,17 @@ async function initCloudSave() {
       auth,
       db,
       provider,
+      collection: firestoreModule.collection,
       doc: firestoreModule.doc,
       getDoc: firestoreModule.getDoc,
       getDocFromServer: firestoreModule.getDocFromServer,
       enableNetwork: firestoreModule.enableNetwork,
       onSnapshot: firestoreModule.onSnapshot,
+      query: firestoreModule.query,
+      runTransaction: firestoreModule.runTransaction,
       setDoc: firestoreModule.setDoc,
       serverTimestamp: firestoreModule.serverTimestamp,
+      where: firestoreModule.where,
       signInWithPopup: authModule.signInWithPopup,
       signInWithRedirect: authModule.signInWithRedirect,
       signOut: authModule.signOut
@@ -4854,6 +6484,10 @@ function isFirebaseConfigReady(config) {
 async function handleCloudAuthState(user) {
   if (!user) {
     leaveOnlineRoomSilently();
+    unsubscribeAuctionFeed();
+    state.auctions.docs = {};
+    state.auctions.userFeedReady = false;
+    state.auctions.message = "";
     state.online.roomId = "";
     state.online.playerIndex = null;
     state.online.room = null;
@@ -5089,11 +6723,16 @@ function collectCloudSaveData() {
     creatorTickets: state.creatorTickets,
     gachaBalls: state.gachaBalls,
     gold: state.gold,
+    playerName: state.playerName,
+    dailyMissions: state.dailyMissions,
+    cardUpgrades: state.cardUpgrades,
     questClears: state.questClears,
     marketPurchases: state.marketPurchases,
     lastDailyReward: state.lastDailyReward,
     tutorialSeen: state.tutorialSeen,
     gachaHistory: state.gachaHistory.slice(0, GACHA_HISTORY_LIMIT),
+    decks: state.decks,
+    activeDeckId: state.activeDeckId,
     deckIds: state.deckIds,
     activeGachaSetId: state.activeGachaSetId,
     aiBattle: getSerializableAiBattle()
@@ -5114,11 +6753,16 @@ function sanitizeCloudSaveData(data) {
     creatorTickets: Math.max(0, clampInteger(data.creatorTickets, 0, 9999)),
     gachaBalls: Math.max(0, clampInteger(data.gachaBalls, 0, 9999)),
     gold: Math.max(0, clampInteger(data.gold, 0, 9999999)),
+    playerName: sanitizePlayerName(data.playerName),
+    dailyMissions: normalizeDailyMissions(data.dailyMissions),
+    cardUpgrades: normalizeCardUpgrades(data.cardUpgrades),
     questClears: normalizeQuestClears(data.questClears),
     marketPurchases: normalizeMarketPurchases(data.marketPurchases),
     lastDailyReward: typeof data.lastDailyReward === "string" ? data.lastDailyReward : "",
     tutorialSeen: Boolean(data.tutorialSeen),
     gachaHistory: Array.isArray(data.gachaHistory) ? data.gachaHistory.slice(0, GACHA_HISTORY_LIMIT) : [],
+    decks: normalizeDecks(data.decks),
+    activeDeckId: typeof data.activeDeckId === "string" ? data.activeDeckId : "",
     deckIds: Array.isArray(data.deckIds) ? data.deckIds : [],
     activeGachaSetId: typeof data.activeGachaSetId === "string" ? data.activeGachaSetId : DEFAULT_GACHA_SET_ID,
     aiBattle: data.aiBattle || null
@@ -5132,6 +6776,9 @@ function applyCloudSaveData(data) {
   state.creatorTickets = data.creatorTickets;
   state.gachaBalls = data.gachaBalls;
   state.gold = data.gold;
+  state.playerName = data.playerName;
+  state.dailyMissions = data.dailyMissions;
+  state.cardUpgrades = data.cardUpgrades;
   state.questClears = data.questClears;
   state.marketPurchases = data.marketPurchases;
   state.lastDailyReward = data.lastDailyReward;
@@ -5142,8 +6789,18 @@ function applyCloudSaveData(data) {
     ? data.activeGachaSetId
     : DEFAULT_GACHA_SET_ID;
   normalizeInventory();
-  state.deckIds = sanitizeDeck(data.deckIds);
-  if (state.deckIds.length === 0) state.deckIds = sanitizeDeck(buildDefaultDeck());
+  state.decks = normalizeDecks(data.decks);
+  if (!state.decks.length) {
+    state.decks = [createDeckRecord("デッキ1", sanitizeDeck(data.deckIds))];
+  }
+  state.activeDeckId = state.decks.some((deck) => deck.id === data.activeDeckId)
+    ? data.activeDeckId
+    : state.decks[0].id;
+  syncActiveDeckToState();
+  if (state.deckIds.length === 0) {
+    state.deckIds = sanitizeDeck(buildDefaultDeck());
+    syncStateToActiveDeck();
+  }
   state.battle = normalizeSavedAiBattle(data.aiBattle) || null;
   persistLocalSaveData();
   state.cloud.applyingRemote = false;
@@ -5155,11 +6812,16 @@ function persistLocalSaveData() {
   localStorage.setItem(STORAGE_KEYS.creatorTickets, String(state.creatorTickets));
   localStorage.setItem(STORAGE_KEYS.gachaBalls, String(state.gachaBalls));
   localStorage.setItem(STORAGE_KEYS.gold, String(state.gold));
+  localStorage.setItem(STORAGE_KEYS.playerName, state.playerName);
+  localStorage.setItem(STORAGE_KEYS.dailyMissions, JSON.stringify(state.dailyMissions));
+  localStorage.setItem(STORAGE_KEYS.cardUpgrades, JSON.stringify(state.cardUpgrades));
   localStorage.setItem(STORAGE_KEYS.questClears, JSON.stringify(normalizeQuestClears(state.questClears)));
   localStorage.setItem(STORAGE_KEYS.marketPurchases, JSON.stringify(normalizeMarketPurchases(state.marketPurchases)));
   localStorage.setItem(STORAGE_KEYS.lastDailyReward, state.lastDailyReward);
   localStorage.setItem(STORAGE_KEYS.tutorialSeen, state.tutorialSeen ? "1" : "0");
   localStorage.setItem(STORAGE_KEYS.gachaHistory, JSON.stringify(state.gachaHistory.slice(0, GACHA_HISTORY_LIMIT)));
+  localStorage.setItem(STORAGE_KEYS.decks, JSON.stringify(state.decks));
+  localStorage.setItem(STORAGE_KEYS.activeDeckId, state.activeDeckId || "");
   localStorage.setItem(STORAGE_KEYS.deck, JSON.stringify(state.deckIds));
   const aiBattle = getSerializableAiBattle();
   if (aiBattle) {
@@ -5175,6 +6837,8 @@ function getSerializableAiBattle() {
   const copy = JSON.parse(JSON.stringify(battle));
   copy.aiScheduled = false;
   copy.aiThinking = copy.phase === "battle" && copy.activePlayer === copy.aiPlayer;
+  copy.autoScheduled = false;
+  copy.autoThinking = false;
   return copy;
 }
 
@@ -5184,6 +6848,26 @@ function readCloudEnabled() {
 
 function saveCloudEnabled(enabled) {
   localStorage.setItem(STORAGE_KEYS.cloudEnabled, enabled ? "1" : "0");
+}
+
+function readAutoBattle() {
+  return localStorage.getItem(STORAGE_KEYS.autoBattle) === "1";
+}
+
+function saveAutoBattle(enabled) {
+  state.autoBattle = Boolean(enabled);
+  localStorage.setItem(STORAGE_KEYS.autoBattle, state.autoBattle ? "1" : "0");
+}
+
+function readPlayerName() {
+  return sanitizePlayerName(localStorage.getItem(STORAGE_KEYS.playerName) || "");
+}
+
+function savePlayerName(name) {
+  state.playerName = sanitizePlayerName(name);
+  localStorage.setItem(STORAGE_KEYS.playerName, state.playerName);
+  queueCloudSave();
+  scheduleOnlineProfileUpdate();
 }
 
 function readTutorialSeen() {
@@ -5263,6 +6947,20 @@ function saveInventory() {
   queueCloudSave();
 }
 
+function readCardUpgrades() {
+  try {
+    return normalizeCardUpgrades(JSON.parse(localStorage.getItem(STORAGE_KEYS.cardUpgrades) || "{}"));
+  } catch {
+    return {};
+  }
+}
+
+function saveCardUpgrades() {
+  state.cardUpgrades = normalizeCardUpgrades(state.cardUpgrades);
+  localStorage.setItem(STORAGE_KEYS.cardUpgrades, JSON.stringify(state.cardUpgrades));
+  queueCloudSave();
+}
+
 function readCreatorTickets() {
   const value = Number.parseInt(localStorage.getItem(STORAGE_KEYS.creatorTickets) || "0", 10);
   return Number.isFinite(value) && value > 0 ? value : 0;
@@ -5299,6 +6997,36 @@ function readQuestClears() {
   } catch {
     return [];
   }
+}
+
+function readDailyMissions() {
+  try {
+    return normalizeDailyMissions(JSON.parse(localStorage.getItem(STORAGE_KEYS.dailyMissions) || "{}"));
+  } catch {
+    return { date: "", progress: {}, claimed: [] };
+  }
+}
+
+function saveDailyMissions() {
+  state.dailyMissions = normalizeDailyMissions(state.dailyMissions);
+  localStorage.setItem(STORAGE_KEYS.dailyMissions, JSON.stringify(state.dailyMissions));
+  queueCloudSave();
+}
+
+function normalizeDailyMissions(value) {
+  if (!value || typeof value !== "object") return { date: "", progress: {}, claimed: [] };
+  const missionIds = new Set(DAILY_MISSION_DEFINITIONS.map((mission) => mission.id));
+  const progress = {};
+  if (value.progress && typeof value.progress === "object" && !Array.isArray(value.progress)) {
+    Object.entries(value.progress).forEach(([id, amount]) => {
+      if (missionIds.has(id)) progress[id] = clampInteger(amount, 0, 9999);
+    });
+  }
+  return {
+    date: typeof value.date === "string" ? value.date : "",
+    progress,
+    claimed: Array.isArray(value.claimed) ? [...new Set(value.claimed.filter((id) => missionIds.has(id)))] : []
+  };
 }
 
 function saveQuestClears() {
@@ -5359,6 +7087,71 @@ function grantDailyRewardIfAvailable() {
   state.gachaResults = [];
 }
 
+function initializeDailyMissions() {
+  const today = localDateKey(new Date());
+  if (!state.dailyMissions || state.dailyMissions.date !== today) {
+    state.dailyMissions = { date: today, progress: {}, claimed: [] };
+  }
+  addDailyMissionProgress("dailyLogin", 1, { silent: true });
+}
+
+function getDailyMissionProgress(missionId) {
+  initializeDailyMissionDateOnly();
+  return Math.max(0, clampInteger(state.dailyMissions.progress?.[missionId] || 0, 0, 9999));
+}
+
+function initializeDailyMissionDateOnly() {
+  const today = localDateKey(new Date());
+  if (!state.dailyMissions || state.dailyMissions.date !== today) {
+    state.dailyMissions = { date: today, progress: {}, claimed: [] };
+  }
+}
+
+function addDailyMissionProgress(eventName, amount = 1, options = {}) {
+  initializeDailyMissionDateOnly();
+  let changed = false;
+  DAILY_MISSION_DEFINITIONS
+    .filter((mission) => mission.event === eventName)
+    .forEach((mission) => {
+      const before = getDailyMissionProgress(mission.id);
+      const after = Math.min(mission.target, before + Math.max(1, amount));
+      if (after !== before) {
+        state.dailyMissions.progress[mission.id] = after;
+        changed = true;
+        if (!options.silent && after >= mission.target) {
+          showToast(`デイリーミッション達成: ${mission.title}`);
+        }
+      }
+    });
+  if (changed) saveDailyMissions();
+}
+
+function isDailyMissionComplete(mission) {
+  return getDailyMissionProgress(mission.id) >= mission.target;
+}
+
+function isDailyMissionClaimed(missionId) {
+  initializeDailyMissionDateOnly();
+  return Array.isArray(state.dailyMissions.claimed) && state.dailyMissions.claimed.includes(missionId);
+}
+
+function claimDailyMission(missionId) {
+  initializeDailyMissionDateOnly();
+  const mission = DAILY_MISSION_DEFINITIONS.find((entry) => entry.id === missionId);
+  if (!mission || !isDailyMissionComplete(mission) || isDailyMissionClaimed(mission.id)) return;
+  state.dailyMissions.claimed.push(mission.id);
+  const reward = mission.reward || {};
+  if (reward.gachaBalls) state.gachaBalls += reward.gachaBalls;
+  if (reward.gold) state.gold += reward.gold;
+  if (reward.creatorTickets) state.creatorTickets += reward.creatorTickets;
+  saveDailyMissions();
+  saveGachaBalls();
+  saveGold();
+  saveCreatorTickets();
+  showToast(`${mission.title}の報酬を受け取りました。`);
+  render();
+}
+
 function localDateKey(date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -5389,7 +7182,54 @@ function readDeck() {
   }
 }
 
+function readDecks() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.decks) || "[]");
+    return normalizeDecks(parsed);
+  } catch {
+    return [];
+  }
+}
+
+function normalizeDecks(value) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  return value
+    .map((deck, index) => {
+      const id = typeof deck?.id === "string" && deck.id ? deck.id : createUid("deck");
+      if (seen.has(id)) return null;
+      seen.add(id);
+      return {
+        id,
+        name: typeof deck?.name === "string" && deck.name.trim() ? deck.name.trim().slice(0, 24) : `デッキ${index + 1}`,
+        deckIds: sanitizeDeck(deck?.deckIds)
+      };
+    })
+    .filter(Boolean);
+}
+
+function saveDecks() {
+  localStorage.setItem(STORAGE_KEYS.decks, JSON.stringify(state.decks.map((deck) => ({
+    id: deck.id,
+    name: deck.name,
+    deckIds: sanitizeDeck(deck.deckIds)
+  }))));
+  queueCloudSave();
+}
+
+function readActiveDeckId() {
+  return localStorage.getItem(STORAGE_KEYS.activeDeckId) || "";
+}
+
+function saveActiveDeckId() {
+  localStorage.setItem(STORAGE_KEYS.activeDeckId, state.activeDeckId || "");
+  queueCloudSave();
+}
+
 function saveDeck() {
+  syncStateToActiveDeck();
+  saveDecks();
+  saveActiveDeckId();
   localStorage.setItem(STORAGE_KEYS.deck, JSON.stringify(state.deckIds));
   queueCloudSave();
 }
@@ -5399,6 +7239,7 @@ function resumeSavedAiBattle() {
     state.screen = "battle";
     render();
     maybeScheduleAiTurn();
+    maybeScheduleAutoBattle();
     return true;
   }
 
@@ -5410,6 +7251,7 @@ function resumeSavedAiBattle() {
   state.cardDetailHandUid = null;
   render();
   maybeScheduleAiTurn();
+  maybeScheduleAutoBattle();
   showToast("保存されたAI戦を再開しました。");
   return true;
 }
@@ -5439,6 +7281,8 @@ function syncAiBattleSave() {
   const copy = JSON.parse(JSON.stringify(battle));
   copy.aiScheduled = false;
   copy.aiThinking = copy.phase === "battle" && copy.activePlayer === copy.aiPlayer;
+  copy.autoScheduled = false;
+  copy.autoThinking = false;
   const serialized = JSON.stringify(copy);
   if (localStorage.getItem(STORAGE_KEYS.aiBattle) !== serialized) {
     localStorage.setItem(STORAGE_KEYS.aiBattle, serialized);
@@ -5468,6 +7312,8 @@ function normalizeSavedAiBattle(battle) {
     aiPlayer: 1,
     aiScheduled: false,
     aiThinking: false,
+    autoScheduled: false,
+    autoThinking: false,
     pendingAttackerUid: typeof battle.pendingAttackerUid === "string" ? battle.pendingAttackerUid : null,
     turnNumber: Math.max(0, clampInteger(battle.turnNumber, 0, 9999)),
     winner: null,
@@ -5529,7 +7375,8 @@ function normalizeSavedBattlePlayer(player, fallbackName) {
     deck: normalizeCardIds(player.deck),
     hand: normalizeHand(player.hand),
     field: normalizeField(player.field),
-    grave
+    grave,
+    cardUpgrades: normalizeCardUpgrades(player.cardUpgrades)
   };
 }
 

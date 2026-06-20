@@ -101,12 +101,21 @@ service cloud.firestore {
       allow update: if isRoomPlayer(resource.data) || isJoiningOpenRoom();
       allow delete: if isRoomPlayer(resource.data);
     }
+
+    match /auctions/{auctionId} {
+      allow read, create, update: if signedIn();
+      allow delete: if false;
+    }
   }
 }
 ```
 
 このルールで、自分のGoogleアカウントの保存データだけ読めるようになります。
 オンライン対戦の部屋は、ログイン済みユーザーが部屋IDで読み込み、参加者だけが更新できます。
+オークションはMVP版のため、ログイン済みユーザーが共有出品に入札・落札更新できます。
+ユーザー出品も `auctions` コレクションに保存されます。出品中のカードは端末の所持数から1枚減ります。
+入札に成功すると、その場で入札額分のゴールドを預かり金として消費します。別の人に最高入札を更新された場合は、対象オークションの「返金を受け取る」からゴールドを戻せます。
+落札者が受け取りを完了すると、出品者が売上を受け取れるようになります。落札後24時間を過ぎた場合は、出品者が期限切れ処理をしてカードを戻し、落札者には預かり金の返金枠を残せます。
 
 ## 8. GitHub Pagesへ反映する
 
@@ -121,12 +130,16 @@ service cloud.firestore {
 
 - 所持カード
 - 作成カード
-- 山札
+- 山札、複数デッキ、選択中デッキ
+- ゲーム内プレイヤー名
+- デイリーミッション進行状況
+- カード強化・進化データ
 - ガチャ玉
 - カード創造チケット
 - ガチャ履歴
 - AI戦の途中データ
-- オンライン対戦の部屋データ
+- オンライン対戦の部屋データ、同期revision
+- オークションの入札・ユーザー出品・返金・売上受け取りデータ
 
 ## 注意
 
@@ -147,7 +160,7 @@ service cloud.firestore {
 
 1. GitHubに最新版の `app.js` と `sw.js` をアップロードしている
 2. `sw.js` の `CACHE_NAME` が上がっている
-3. スマホで `https://mashiroirokaede.github.io/cardgame/index.html?v=26` のように開き直す
+3. スマホで `https://mashiroirokaede.github.io/cardgame/index.html?v=46` のように開き直す
 4. Firebase Consoleで `Firestore Database` が作成済み
 5. FirestoreのRulesが設定済み
 
