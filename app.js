@@ -130,7 +130,7 @@ const DAILY_MISSION_DEFINITIONS = [
     body: "カードを1回強化する",
     event: "cardUpgrade",
     target: 1,
-    reward: { creatorTickets: 1, gold: 120 }
+    reward: { gold: 220 }
   }
 ];
 
