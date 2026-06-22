@@ -49,6 +49,10 @@ const AUCTION_CLAIM_GRACE_MS = 24 * 60 * 60 * 1000;
 const AUCTION_MIN_BID_INCREMENT = 10;
 const CARD_MAX_ENHANCE_LEVEL = 10;
 const CARD_MAX_EVOLUTION = 3;
+const BATTLE_ENHANCE_COST = 2;
+const BATTLE_ENHANCE_ATK_BONUS = 2;
+const BATTLE_ENHANCE_DEF_BONUS = 4;
+const BATTLE_ENHANCE_MAX = 5;
 const CLOUD_SAVE_VERSION = 1;
 const CLOUD_SAVE_DEBOUNCE_MS = 900;
 const FIREBASE_SDK_VERSION = "10.12.5";
@@ -128,7 +132,7 @@ const DAILY_MISSION_DEFINITIONS = [
     id: "upgrade",
     title: "カード強化",
     body: "カードを1回強化する",
-    event: "cardUpgrade",
+    event: "battleEnhance",
     target: 1,
     reward: { gold: 220 }
   }
@@ -1142,6 +1146,11 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "battle-enhance-card") {
+    enhanceBattleUnit(button.dataset.uid);
+    return;
+  }
+
   if (action === "select-attacker") {
     selectAttacker(button.dataset.uid);
     return;
@@ -1367,7 +1376,6 @@ function renderTopbar() {
         <button class="ghost" data-action="screen" data-screen="quest">クエスト</button>
         <button class="ghost" data-action="screen" data-screen="market">ショップ</button>
         <button class="ghost" data-action="screen" data-screen="deck">山札編成</button>
-        <button class="ghost" data-action="screen" data-screen="upgrade">強化</button>
         <button class="ghost" data-action="screen" data-screen="creator">カード作成</button>
         <button class="ghost" data-action="screen" data-screen="cloud">クラウド保存</button>
         <button class="ghost" data-action="screen" data-screen="online">オンライン</button>
@@ -1385,7 +1393,7 @@ function renderScreen() {
   if (state.screen === "quest") return renderQuest();
   if (state.screen === "market") return renderMarket();
   if (state.screen === "deck") return renderDeckBuilder();
-  if (state.screen === "upgrade") return renderCardUpgrade();
+  if (state.screen === "upgrade") return renderMenu();
   if (state.screen === "creator") return renderCardCreator();
   if (state.screen === "battle") return renderBattle();
   if (state.screen === "cloud") return renderCloudSave();
@@ -1402,7 +1410,6 @@ function renderMenu() {
       ${renderMenuTile("クエスト", "ステージを順番にクリアしてゴールドを集めます。", "冒", "quest")}
       ${renderMenuTile("ショップ・オークション", "ゴールドでカードを買ったり、余ったカードを売却します。", "市", "market")}
       ${renderMenuTile("山札編成", "100〜300枚の山札を所持カードと作成カードから組みます。", "山", "deck")}
-      ${renderMenuTile("カード強化", "余った同名カードとゴールドでカードを強化・進化します。", "強", "upgrade")}
       ${renderMenuTile("カード作成", "ガチャで入手した創造チケットを消費してカードを作ります。", "作", "creator")}
       ${renderMenuTile("クラウド保存", "Googleアカウントでログインして別端末にもデータを引き継ぎます。", "雲", "cloud")}
       <button class="menu-tile" data-action="start-battle">
@@ -2483,13 +2490,10 @@ function getOnlineDeckSnapshot() {
   const customCards = state.customCards
     .filter((card) => deckCustomIds.has(card.id))
     .map((card) => upgradeCustomCard(card));
-  const cardUpgrades = Object.fromEntries(Object.entries(state.cardUpgrades)
-    .filter(([cardId, upgrade]) => deckIds.includes(cardId) && normalizeCardUpgrade(upgrade).level + normalizeCardUpgrade(upgrade).evolution > 0)
-    .map(([cardId, upgrade]) => [cardId, normalizeCardUpgrade(upgrade)]));
   return {
     deckIds,
     customCards,
-    cardUpgrades
+    cardUpgrades: {}
   };
 }
 
@@ -2504,7 +2508,7 @@ function createOnlinePlayerProfile() {
     deckIds: deckSnapshot.deckIds,
     deckCount: deckSnapshot.deckIds.length,
     customCards: deckSnapshot.customCards,
-    cardUpgrades: deckSnapshot.cardUpgrades
+    cardUpgrades: {}
   };
 }
 
@@ -2767,8 +2771,8 @@ function createOnlineBattle(room) {
     winner: null,
     initialDeckSize: Math.max(deck1.length, deck2.length),
     players: [
-      createPlayer(players[0].name || "P1", deck1, players[0].cardUpgrades),
-      createPlayer(players[1].name || "P2", deck2, players[1].cardUpgrades)
+      createPlayer(players[0].name || "P1", deck1),
+      createPlayer(players[1].name || "P2", deck2)
     ],
     log: ["オンライン対戦を開始しました。"]
   };
@@ -3376,6 +3380,8 @@ function renderFieldCard(unit, owner, isActiveOwner, ownerIndex) {
   const canAct = canControlBattle(battle);
   const canSelect = canAct && !isAiTurn(battle) && isActiveOwner && unit.canAttack && !pending;
   const canTarget = canAct && !isAiTurn(battle) && pending && ownerIndex !== battle.activePlayer;
+  const enhanceLevel = getBattleEnhanceLevel(unit);
+  const canEnhance = canAct && !isAiTurn(battle) && isActiveOwner && !pending && owner.currentCost >= BATTLE_ENHANCE_COST && enhanceLevel < BATTLE_ENHANCE_MAX;
   const classes = [
     "field-card",
     canSelect ? "selectable" : "",
@@ -3392,8 +3398,10 @@ function renderFieldCard(unit, owner, isActiveOwner, ownerIndex) {
       <div class="toolbar">
         ${card.abilities?.includes("block") ? `<span class="pill pink strong">ブロック</span>` : ""}
         ${card.characterEffect ? `<span class="pill aqua">${escapeHtml(characterEffectShortText(card.characterEffect))}</span>` : ""}
+        ${enhanceLevel > 0 ? `<span class="pill mint strong">強化 +${enhanceLevel}</span>` : ""}
         <span class="pill">${unit.canAttack ? "攻撃可" : "待機"}</span>
       </div>
+      ${canEnhance ? `<button class="primary" data-action="battle-enhance-card" data-uid="${unit.uid}">強化 ${BATTLE_ENHANCE_COST}</button>` : ""}
       ${canSelect ? `<button class="accent" data-action="select-attacker" data-uid="${unit.uid}">攻撃する</button>` : ""}
       ${canTarget ? `<button class="primary" data-action="attack-card" data-uid="${unit.uid}">対象にする</button>` : ""}
     </div>
@@ -3884,8 +3892,8 @@ function startBattle(mode = "local", options = {}) {
     winner: null,
     rewardGranted: false,
     players: [
-      createPlayer(aiMode ? "あなた" : "プレイヤー1", p1Deck, state.cardUpgrades),
-      createPlayer(aiMode ? "AI" : "プレイヤー2", p2Deck, aiMode ? {} : state.cardUpgrades)
+      createPlayer(aiMode ? "あなた" : "プレイヤー1", p1Deck),
+      createPlayer(aiMode ? "AI" : "プレイヤー2", p2Deck)
     ],
     log: []
   };
@@ -3938,7 +3946,7 @@ function startQuestBattle(stageId) {
     winner: null,
     rewardGranted: false,
     players: [
-      createPlayer("あなた", p1Deck, state.cardUpgrades),
+      createPlayer("あなた", p1Deck),
       createPlayer(stage.enemyName, enemyDeck)
     ],
     log: []
@@ -4080,7 +4088,8 @@ function playHandCard(uid) {
       uid: createUid("unit"),
       cardId: card.id,
       baseDefRemaining: card.def,
-      canAttack: false
+      canAttack: false,
+      battleEnhance: 0
     });
     battle.log.push(`${player.name}が${card.name}を召喚しました。`);
     resolveCharacterEffect(battle, player, battle.players[1 - battle.activePlayer], card, "summon");
@@ -4227,6 +4236,48 @@ function sendHandCardsToGraveByUid(battle, player, uids, sourceName) {
   }
   battle.log.push(`${player.name}が${sourceName}の効果で${sentNames.join("、")}を墓地へ送り、レベルが${player.level}になりました。`);
   setFx("level", "墓地送り", `LV +${levelGain}`, "SR");
+}
+
+function enhanceBattleUnit(uid) {
+  const battle = state.battle;
+  if (!isBattleActive()) return;
+  if (isAiTurn(battle)) return;
+  if (!canControlBattle(battle)) {
+    showToast("相手のターンです。");
+    return;
+  }
+  const playerIndex = battle.activePlayer;
+  const player = battle.players[playerIndex];
+  const unit = player.field.find((fieldUnit) => fieldUnit.uid === uid);
+  if (!unit) return;
+  if (player.currentCost < BATTLE_ENHANCE_COST) {
+    showToast(`強化にはコスト${BATTLE_ENHANCE_COST}が必要です。`);
+    return;
+  }
+  if (getBattleEnhanceLevel(unit) >= BATTLE_ENHANCE_MAX) {
+    showToast("このカードはこれ以上強化できません。");
+    return;
+  }
+  if (!enhanceBattleUnitForPlayer(battle, playerIndex, unit, true)) return;
+  render();
+  syncOnlineBattle();
+}
+
+function enhanceBattleUnitForPlayer(battle, playerIndex, unit, countsMission = false) {
+  const player = battle.players[playerIndex];
+  const card = getBattleCard(unit?.cardId, player);
+  if (!player || !card || player.currentCost < BATTLE_ENHANCE_COST) return false;
+  const beforeLevel = getBattleEnhanceLevel(unit);
+  if (beforeLevel >= BATTLE_ENHANCE_MAX) return false;
+
+  player.currentCost -= BATTLE_ENHANCE_COST;
+  unit.battleEnhance = beforeLevel + 1;
+  const currentBaseDef = Number.isFinite(unit.baseDefRemaining) ? unit.baseDefRemaining : card.def;
+  unit.baseDefRemaining = Math.min(getBattleEnhancedMaxDef(card, unit), currentBaseDef + BATTLE_ENHANCE_DEF_BONUS);
+  battle.log.push(`${player.name}が${card.name}をバトル中強化しました。強化+${unit.battleEnhance}`);
+  if (countsMission) addDailyMissionProgress("battleEnhance", 1);
+  setFx("level", "バトル強化", `${card.name} +${unit.battleEnhance}`, card.rarity || "N");
+  return true;
 }
 
 function selectAttacker(uid) {
@@ -4472,7 +4523,7 @@ function healUnitDefense(unit, owner, amount) {
   const multiplier = levelMultiplier(owner.level);
   const before = getEffectiveStats(unit, owner).def;
   const currentBaseDef = Number.isFinite(unit.baseDefRemaining) ? unit.baseDefRemaining : card.def;
-  unit.baseDefRemaining = Math.min(card.def, currentBaseDef + Math.max(0, amount) / multiplier);
+  unit.baseDefRemaining = Math.min(getBattleEnhancedMaxDef(card, unit), currentBaseDef + Math.max(0, amount) / multiplier);
   const after = getEffectiveStats(unit, owner).def;
   return Math.max(0, after - before);
 }
@@ -4524,7 +4575,7 @@ function runAutoBattleTurn() {
 
   let actionCount = 0;
   while (actionCount < 16 && battle.phase !== "over" && shouldAutoControlPlayer(battle, 0)) {
-    const acted = tryAutoUseSpell(battle, 0) || tryAutoSummon(battle, 0) || tryAutoLevelUp(battle, 0);
+    const acted = tryAutoUseSpell(battle, 0) || tryAutoSummon(battle, 0) || tryAutoEnhanceUnit(battle, 0, true) || tryAutoLevelUp(battle, 0);
     if (!acted) break;
     actionCount += 1;
   }
@@ -4585,6 +4636,20 @@ function tryAutoSummon(battle, playerIndex) {
   return autoPlayHandIndex(battle, playerIndex, candidates[0].index);
 }
 
+function tryAutoEnhanceUnit(battle, playerIndex, countsMission = false) {
+  const player = battle.players[playerIndex];
+  if (!player || player.currentCost < BATTLE_ENHANCE_COST) return false;
+  const candidates = player.field
+    .filter((unit) => getBattleEnhanceLevel(unit) < BATTLE_ENHANCE_MAX)
+    .sort((a, b) => {
+      const aStats = getEffectiveStats(a, player);
+      const bStats = getEffectiveStats(b, player);
+      return (bStats.atk + bStats.def) - (aStats.atk + aStats.def);
+    });
+  if (!candidates.length) return false;
+  return enhanceBattleUnitForPlayer(battle, playerIndex, candidates[0], countsMission);
+}
+
 function tryAutoLevelUp(battle, playerIndex) {
   const player = battle.players[playerIndex];
   if (player.currentCost < 1 || player.hand.length < 5 || player.level >= LEVEL_FOR_MULTIPLIER_CAP) return false;
@@ -4611,7 +4676,8 @@ function autoPlayHandIndex(battle, playerIndex, handIndex) {
       uid: createUid("unit"),
       cardId: card.id,
       baseDefRemaining: card.def,
-      canAttack: false
+      canAttack: false,
+      battleEnhance: 0
     });
     battle.log.push(`${player.name}がオートで${card.name}を召喚しました。`);
     resolveCharacterEffect(battle, player, opponent, card, "summon");
@@ -4724,7 +4790,7 @@ function runAiTurn() {
 
   let actionCount = 0;
   while (actionCount < 12 && battle.phase !== "over") {
-    const acted = tryAiUseSpell(battle) || tryAiSummon(battle) || tryAiLevelUp(battle);
+    const acted = tryAiUseSpell(battle) || tryAiSummon(battle) || tryAiEnhanceUnit(battle) || tryAiLevelUp(battle);
     if (!acted) break;
     actionCount += 1;
   }
@@ -4778,6 +4844,10 @@ function tryAiSummon(battle) {
   return aiPlayHandIndex(battle, candidates[0].index);
 }
 
+function tryAiEnhanceUnit(battle) {
+  return tryAutoEnhanceUnit(battle, battle.aiPlayer, false);
+}
+
 function tryAiLevelUp(battle) {
   const ai = battle.players[battle.aiPlayer];
   if (ai.currentCost < 1 || ai.hand.length < 4 || ai.level >= LEVEL_FOR_MULTIPLIER_CAP) return false;
@@ -4803,7 +4873,8 @@ function aiPlayHandIndex(battle, handIndex) {
       uid: createUid("unit"),
       cardId: card.id,
       baseDefRemaining: card.def,
-      canAttack: false
+      canAttack: false,
+      battleEnhance: 0
     });
     battle.log.push(`AIが${card.name}を召喚しました。`);
     resolveCharacterEffect(battle, ai, battle.players[0], card, "summon");
@@ -5016,17 +5087,17 @@ function getBaseCard(cardId) {
 }
 
 function getCards() {
-  return getBaseCards().map((card) => applyCardUpgrade(card, state.cardUpgrades));
+  return getBaseCards().map((card) => applyCardUpgrade(card, {}));
 }
 
 function getCard(cardId) {
   const card = getBaseCard(cardId);
-  return card ? applyCardUpgrade(card, state.cardUpgrades) : undefined;
+  return card ? applyCardUpgrade(card, {}) : undefined;
 }
 
 function getBattleCard(cardId, player) {
   const card = getBaseCard(cardId);
-  return card ? applyCardUpgrade(card, player?.cardUpgrades || {}) : undefined;
+  return card ? applyCardUpgrade(card, {}) : undefined;
 }
 
 function applyCardUpgrade(card, upgrades = state.cardUpgrades) {
@@ -6258,10 +6329,19 @@ function getCardArtProfile(card) {
 function getEffectiveStats(unit, owner) {
   const card = getBattleCard(unit.cardId, owner);
   const multiplier = levelMultiplier(owner.level);
+  const enhanceLevel = getBattleEnhanceLevel(unit);
   return {
-    atk: Math.ceil(card.atk * multiplier),
+    atk: Math.ceil((card.atk + enhanceLevel * BATTLE_ENHANCE_ATK_BONUS) * multiplier),
     def: Math.max(0, Math.ceil(unit.baseDefRemaining * multiplier))
   };
+}
+
+function getBattleEnhanceLevel(unit) {
+  return clampInteger(unit?.battleEnhance || 0, 0, BATTLE_ENHANCE_MAX);
+}
+
+function getBattleEnhancedMaxDef(card, unit) {
+  return Math.max(0, (card?.def || 0) + getBattleEnhanceLevel(unit) * BATTLE_ENHANCE_DEF_BONUS);
 }
 
 function levelMultiplier(level) {
